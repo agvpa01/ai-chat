@@ -1,0 +1,68 @@
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
+
+export default defineSchema({
+  chatMessages: defineTable({
+    threadId: v.string(),
+    role: v.union(v.literal("assistant"), v.literal("user"), v.literal("tool")),
+    kind: v.string(),
+    text: v.string(),
+    metadata: v.optional(v.any()),
+  }).index("by_thread", ["threadId"]),
+  customerOrders: defineTable({
+    customerId: v.string(),
+    orderNumber: v.string(),
+    status: v.string(),
+    trackingUrl: v.optional(v.string()),
+    summary: v.string(),
+    etaLabel: v.optional(v.string()),
+  }).index("by_customer", ["customerId"]),
+  exercises: defineTable({
+    slug: v.string(),
+    name: v.string(),
+    mode: v.union(v.literal("reps"), v.literal("timer")),
+    defaultTarget: v.number(),
+    unit: v.string(),
+    defaultRestSeconds: v.number(),
+    focus: v.string(),
+    summary: v.optional(v.string()),
+    instructions: v.optional(v.array(v.string())),
+    equipment: v.optional(v.string()),
+    youtubeUrl: v.optional(v.string()),
+    imageStorageId: v.optional(v.id("_storage")),
+    imagePrompt: v.optional(v.string()),
+  }).index("by_slug", ["slug"]),
+  products: defineTable({
+    slug: v.string(),
+    title: v.string(),
+    category: v.string(),
+    priceLabel: v.string(),
+    benefit: v.string(),
+    shopifyId: v.optional(v.string()),
+    imageUrl: v.optional(v.string()),
+    productUrl: v.optional(v.string()),
+  }).index("by_slug", ["slug"]),
+  storeDocuments: defineTable({
+    slug: v.string(),
+    topic: v.string(),
+    title: v.string(),
+    body: v.string(),
+    sourceUrl: v.optional(v.string()),
+  }).index("by_topic", ["topic"]),
+  todos: defineTable({
+    text: v.string(),
+    completed: v.boolean(),
+  }),
+  workouts: defineTable({
+    slug: v.string(),
+    name: v.string(),
+    goal: v.string(),
+    level: v.string(),
+    durationMinutes: v.number(),
+    summary: v.string(),
+    exerciseSlugs: v.array(v.string()),
+    recommendedProductSlugs: v.array(v.string()),
+    imageStorageId: v.optional(v.id("_storage")),
+    imagePrompt: v.optional(v.string()),
+  }).index("by_slug", ["slug"]),
+});
