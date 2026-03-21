@@ -46,6 +46,11 @@ export type OrderPreview = {
   status: string;
   eta: string;
   lastEvent: string;
+  financialStatus?: string | null;
+  trackingNumber?: string | null;
+  trackingCompany?: string | null;
+  trackingUrl?: string | null;
+  customerEmail?: string | null;
 };
 
 export type RecommendedProduct = {
@@ -191,6 +196,54 @@ export const workouts: Workout[] = [
     ],
   },
   {
+    id: "core-control",
+    name: "Core Control",
+    goal: "Abs strength and trunk stability",
+    level: "Beginner to intermediate",
+    durationMinutes: 20,
+    summary:
+      "A focused core block that blends bracing, lower-ab control, and steady midline work without a ton of equipment.",
+    recommendedProductIds: ["electrolytes", "whey-isolate"],
+    exercises: [
+      {
+        id: "dead-bug",
+        name: "Dead Bug",
+        mode: "reps",
+        target: 10,
+        unit: "reps",
+        restSeconds: 20,
+        focus: "Deep core control",
+      },
+      {
+        id: "plank-hold",
+        name: "Plank Hold",
+        mode: "timer",
+        target: 40,
+        unit: "sec",
+        restSeconds: 20,
+        focus: "Bracing core",
+      },
+      {
+        id: "mountain-climber",
+        name: "Mountain Climbers",
+        mode: "timer",
+        target: 30,
+        unit: "sec",
+        restSeconds: 20,
+        focus: "Cardio core",
+      },
+      {
+        id: "reverse-crunch",
+        name: "Reverse Crunch",
+        mode: "reps",
+        target: 12,
+        unit: "reps",
+        restSeconds: 25,
+        focus: "Lower abs",
+      },
+    ],
+  },
+  {
     id: "strength-builder",
     name: "Strength Builder",
     goal: "Muscle gain and progression",
@@ -304,7 +357,11 @@ export type DemoMessage =
       products?: RecommendedProduct[];
       productSectionTitle?: string;
       articles?: RecommendedArticle[];
+      orderPreview?: OrderPreview;
+      orderPreviews?: OrderPreview[];
+      requiresAccountConnection?: boolean;
       workoutSlugs?: string[];
+      workoutDetailSlug?: string;
     }
   | {
       id: string;
@@ -337,21 +394,24 @@ export const initialMessages: DemoMessage[] = [
 ];
 
 const keywordMap = {
-  hiit: "ignite-hiit",
-  cardio: "ignite-hiit",
-  fat: "ignite-hiit",
-  strength: "strength-builder",
-  muscle: "strength-builder",
-  recovery: "reset-recovery",
-  mobility: "reset-recovery",
-  stretch: "reset-recovery",
-} as const;
+  "ignite-hiit": ["hiit", "cardio", "fat", "conditioning", "fat loss"],
+  "core-control": ["abs", "ab", "abdominals", "core", "midsection"],
+  "strength-builder": ["strength", "muscle", "lift", "lifting"],
+  "reset-recovery": ["recovery", "mobility", "stretch", "cooldown", "cool down"],
+} satisfies Record<Workout["id"], string[]>;
+
+function matchesWorkoutKeyword(input: string, keyword: string) {
+  const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = escapedKeyword.replace(/\s+/g, "\\s+");
+
+  return new RegExp(`\\b${pattern}\\b`, "i").test(input);
+}
 
 export function chooseWorkout(input: string): Workout {
   const lowered = input.toLowerCase();
 
-  for (const [keyword, workoutId] of Object.entries(keywordMap)) {
-    if (lowered.includes(keyword)) {
+  for (const [workoutId, keywords] of Object.entries(keywordMap)) {
+    if (keywords.some((keyword) => matchesWorkoutKeyword(lowered, keyword))) {
       return workouts.find((workout) => workout.id === workoutId) ?? workouts[0];
     }
   }
@@ -393,6 +453,16 @@ export function buildAssistantMessages(
 } {
   const lowered = input.toLowerCase();
   const authMode = getCustomerAuthRequestMode(lowered);
+  const isWorkoutIntent =
+    lowered.includes("workout") ||
+    lowered.includes("exercise") ||
+    lowered.includes("beginner") ||
+    lowered.includes("plan");
+  const isProductIntent =
+    lowered.includes("protein") ||
+    lowered.includes("supplement") ||
+    lowered.includes("product") ||
+    (lowered.includes("recommend") && !isWorkoutIntent);
 
   if (authMode) {
     return {
@@ -434,12 +504,7 @@ export function buildAssistantMessages(
     };
   }
 
-  if (
-    lowered.includes("protein") ||
-    lowered.includes("supplement") ||
-    lowered.includes("recommend") ||
-    lowered.includes("product")
-  ) {
+  if (isProductIntent) {
     const activeWorkout =
       workouts.find((workout) => workout.id === currentWorkoutId) ?? workouts[0];
     return {
@@ -455,12 +520,7 @@ export function buildAssistantMessages(
     };
   }
 
-  if (
-    lowered.includes("workout") ||
-    lowered.includes("exercise") ||
-    lowered.includes("beginner") ||
-    lowered.includes("plan")
-  ) {
+  if (isWorkoutIntent) {
     const workout = chooseWorkout(lowered);
 
     return {
@@ -470,7 +530,7 @@ export function buildAssistantMessages(
           id: `workout-${Date.now()}`,
           role: "assistant",
           kind: "text",
-          text: `${workout.name} is a nice fit here. Here are a few workout options to start with, and I can break down the exercises for any one you pick.`,
+          text: "Here are a few workout picks.",
           workoutSlugs: buildWorkoutCardIds(lowered),
         },
       ],

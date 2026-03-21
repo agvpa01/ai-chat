@@ -11,6 +11,10 @@ describe("vpa assistant helpers", () => {
     expect(chooseWorkout("I want a mobility reset").id).toBe("reset-recovery");
   });
 
+  test("chooses a core workout for abs prompts", () => {
+    expect(chooseWorkout("could you suggest list of exercises for abs").id).toBe("core-control");
+  });
+
   test("returns product cards for recommendation prompts", () => {
     const reply = buildAssistantMessages("recommend some products", "ignite-hiit");
 
@@ -45,6 +49,20 @@ describe("vpa assistant helpers", () => {
     }
 
     expect(message.workoutSlugs).toEqual(buildWorkoutCardIds("strength"));
+  });
+
+  test("treats recommended abs workouts as workout guidance, not products", () => {
+    const reply = buildAssistantMessages("recommend some abs workouts", "ignite-hiit");
+    const message = reply.messages[0];
+
+    expect(reply.messages).toHaveLength(1);
+    expect(message?.kind).toBe("text");
+
+    if (!message || message.kind !== "text") {
+      throw new Error("Expected a text response");
+    }
+
+    expect(message.workoutSlugs?.[0]).toBe("core-control");
   });
 
   test("formats seconds for chat labels", () => {

@@ -41,6 +41,7 @@ If you prefer not to use Tailwind CSS:
 ## Setting up Convex
 
 - Set the `VITE_CONVEX_URL` and `CONVEX_DEPLOYMENT` environment variables in your `.env.local`. (Or run `pnpm dlx convex init` to set them automatically.)
+- Keep Shopify and OpenAI secrets in Convex environment variables rather than `.env.local`.
 - Run `pnpm dlx convex dev` to start the Convex server.
 
 ## Shadcn

@@ -105,6 +105,46 @@ type RecommendedArticle = {
   blogTitle: string | null;
 };
 
+type OrderTrackingPreview = {
+  orderNumber: string;
+  status: string;
+  eta: string;
+  lastEvent: string;
+  financialStatus: string | null;
+  trackingNumber: string | null;
+  trackingCompany: string | null;
+  trackingUrl: string | null;
+  customerEmail: string | null;
+};
+
+type AdminOrderCard = {
+  name: string;
+  email: string | null;
+  displayFulfillmentStatus: string | null;
+  displayFinancialStatus: string | null;
+  statusPageUrl: string | null;
+  customer: {
+    email: string | null;
+  } | null;
+  fulfillments: Array<{
+    status: string | null;
+    createdAt: string | null;
+    trackingInfo: Array<{
+      company: string | null;
+      number: string | null;
+      url: string | null;
+    }>;
+  }>;
+};
+
+type AdminCustomerOrderLookup = {
+  id: string;
+  email: string | null;
+  orders: {
+    nodes: AdminOrderCard[];
+  };
+};
+
 type ProductRecommendationResult = {
   products: RecommendedProduct[];
   collectionTitle: string | null;
@@ -118,8 +158,17 @@ type PublicSitemapArticle = {
   blogTitle: string | null;
 };
 
+type ConnectedCustomer = {
+  id: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  displayName: string;
+};
+
 const WORKOUT_SEARCH_TERMS: Record<string, string[]> = {
   "ignite-hiit": ["pre workout", "hydration", "protein"],
+  "core-control": ["hydration", "protein"],
   "strength-builder": ["protein", "creatine"],
   "reset-recovery": ["protein", "hydration"],
 };
@@ -644,6 +693,43 @@ function buildRecommendationSearchTerms(message: string, workoutId?: string) {
   }
 
   return Array.from(terms).slice(0, 3);
+}
+
+export function isOrderTrackingRequest(message: string) {
+  const lowered = message.toLowerCase();
+
+  return (
+    lowered.includes("track my order") ||
+    lowered.includes("track this order") ||
+    lowered.includes("order number") ||
+    (lowered.includes("track") && lowered.includes("order")) ||
+    lowered.includes("where is my order")
+  );
+}
+
+export function isOrderHistoryRequest(message: string) {
+  const lowered = message.toLowerCase();
+
+  return (
+    (lowered.includes("orders") && lowered.includes("email")) ||
+    lowered.includes("order history") ||
+    lowered.includes("my orders") ||
+    lowered.includes("orders for") ||
+    lowered.includes("orders of")
+  );
+}
+
+export function extractOrderNumber(message: string) {
+  const explicitMatch =
+    message.match(/\border(?:\s+number)?\s*#?\s*([A-Z0-9-]{4,})\b/i) ??
+    message.match(/#([A-Z0-9-]{4,})\b/);
+
+  return explicitMatch?.[1]?.toUpperCase() ?? null;
+}
+
+export function extractEmailAddress(message: string) {
+  const match = message.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  return match?.[0]?.toLowerCase() ?? null;
 }
 
 export function isArticleRecommendationRequest(message: string) {
@@ -1404,6 +1490,9 @@ function isExerciseGuidanceQuestion(message: string) {
     "exercises",
     "workout",
     "workouts",
+    "abs",
+    "ab workout",
+    "core",
     "stretch",
     "stretches",
     "mobility",
@@ -1428,22 +1517,24 @@ function shouldPreferArticle(message: string) {
   const mentionsSpecificProduct = Object.values(PRODUCT_ALIASES).some((aliases) =>
     aliases.some((alias) => lowered.includes(alias)),
   );
+  const looksLikeOrderSupport = isOrderTrackingRequest(message) || isOrderHistoryRequest(message);
 
   return (
-    isArticleRecommendationRequest(message) ||
-    isInformationalHealthQuestion(message) ||
-    lowered.includes("what is") ||
-    lowered.includes("benefit") ||
-    lowered.includes("benefits") ||
-    lowered.includes("difference") ||
-    lowered.includes("vs") ||
-    lowered.includes("compare") ||
-    lowered.includes("good for") ||
-    lowered.includes("good supplement") ||
-    lowered.includes("is ") ||
-    lowered.includes("how does") ||
-    lowered.includes("explain") ||
-    (mentionsSpecificProduct && lowered.includes("?") && !isDirectProductDetailQuestion(message))
+    !looksLikeOrderSupport &&
+    (isArticleRecommendationRequest(message) ||
+      isInformationalHealthQuestion(message) ||
+      lowered.includes("what is") ||
+      lowered.includes("benefit") ||
+      lowered.includes("benefits") ||
+      lowered.includes("difference") ||
+      lowered.includes("vs") ||
+      lowered.includes("compare") ||
+      lowered.includes("good for") ||
+      lowered.includes("good supplement") ||
+      lowered.includes("is ") ||
+      lowered.includes("how does") ||
+      lowered.includes("explain") ||
+      (mentionsSpecificProduct && lowered.includes("?") && !isDirectProductDetailQuestion(message)))
   );
 }
 
@@ -1451,12 +1542,119 @@ export const reply = action({
   args: {
     message: v.string(),
     workoutId: v.optional(v.string()),
+    customerEmail: v.optional(v.string()),
+    customerAccessToken: v.optional(v.string()),
   },
   handler: async (_ctx, args) => {
     const message = args.message.trim();
 
     if (!message) {
       throw new Error("Message is required");
+    }
+
+    const connectedCustomer =
+      isOrderHistoryRequest(message) || isOrderTrackingRequest(message)
+        ? await resolveConnectedCustomerForOrderSupport(args.customerAccessToken).catch(() => null)
+        : null;
+
+    if (isOrderHistoryRequest(message)) {
+      if (!connectedCustomer) {
+        return buildOrderConnectionRequiredResponse();
+      }
+
+      const providedEmail = extractEmailAddress(message)?.toLowerCase() ?? null;
+      const connectedEmail = connectedCustomer.email.toLowerCase();
+
+      if (providedEmail && providedEmail !== connectedEmail) {
+        return buildOrderAccountMismatchResponse(connectedCustomer.email);
+      }
+
+      const orders = await getOrdersByEmail(connectedEmail).catch(() => []);
+
+      if (!orders.length) {
+        return {
+          text: `I couldn't find any VPA orders for the connected Shopify account (${connectedCustomer.email}).`,
+          source: "live",
+          storeSnapshot: null,
+          recommendedProductsCollectionTitle: null,
+          recommendedProducts: [],
+          recommendedArticles: [],
+          orderPreview: null,
+          orderPreviews: [],
+          requiresAccountConnection: false,
+        };
+      }
+
+      return {
+        text:
+          orders.length === 1
+            ? `I found 1 order for the connected Shopify account (${connectedCustomer.email}).`
+            : `I found ${orders.length} recent orders for the connected Shopify account (${connectedCustomer.email}).`,
+        source: "live",
+        storeSnapshot: null,
+        recommendedProductsCollectionTitle: null,
+        recommendedProducts: [],
+        recommendedArticles: [],
+        orderPreview: null,
+        orderPreviews: orders,
+        requiresAccountConnection: false,
+      };
+    }
+
+    if (isOrderTrackingRequest(message)) {
+      if (!connectedCustomer) {
+        return buildOrderConnectionRequiredResponse();
+      }
+
+      const orderNumber = extractOrderNumber(message);
+      const providedEmail = extractEmailAddress(message)?.toLowerCase() ?? null;
+      const connectedEmail = connectedCustomer.email.toLowerCase();
+
+      if (!orderNumber) {
+        return {
+          text: "I can help with that. Share the order number and I’ll check the status for your connected Shopify account.",
+          source: "live",
+          storeSnapshot: null,
+          recommendedProductsCollectionTitle: null,
+          recommendedProducts: [],
+          recommendedArticles: [],
+          orderPreview: null,
+          orderPreviews: [],
+          requiresAccountConnection: false,
+        };
+      }
+
+      if (providedEmail && providedEmail !== connectedEmail) {
+        return buildOrderAccountMismatchResponse(connectedCustomer.email);
+      }
+
+      const trackedOrder = await getTrackedOrder(orderNumber, connectedEmail).catch(() => null);
+
+      if (!trackedOrder) {
+        return {
+          text: `I couldn't find a VPA order matching #${orderNumber} for the connected Shopify account (${connectedCustomer.email}).`,
+          source: "live",
+          storeSnapshot: null,
+          recommendedProductsCollectionTitle: null,
+          recommendedProducts: [],
+          recommendedArticles: [],
+          orderPreview: null,
+          orderPreviews: [],
+          requiresAccountConnection: false,
+        };
+      }
+
+      return {
+        text: `Here’s the latest tracking view for ${trackedOrder.orderNumber}.`,
+        source: "live",
+        storeSnapshot: null,
+        recommendedProductsCollectionTitle: null,
+        recommendedProducts: [],
+        recommendedArticles: [],
+        orderPreview: trackedOrder,
+        orderPreviews: [],
+        requiresAccountConnection: false,
+      };
     }
 
     const storeSnapshot = await getAdminStoreSnapshot().catch(() => null);
@@ -1535,6 +1733,488 @@ export const reply = action({
       recommendedProductsCollectionTitle,
       recommendedProducts: shouldHideProductCards || shouldShowArticle ? [] : recommendedProducts,
       recommendedArticles: shouldShowArticle ? recommendedArticles : [],
+      orderPreview: null,
+      orderPreviews: [],
+      requiresAccountConnection: false,
     };
   },
 });
+
+function buildOrderConnectionRequiredResponse() {
+  return {
+    text: "Connect your Shopify account to track orders or view order history in chat. For privacy, I only show orders for the signed-in Shopify customer.",
+    source: "live" as const,
+    storeSnapshot: null,
+    recommendedProductsCollectionTitle: null,
+    recommendedProducts: [],
+    recommendedArticles: [],
+    orderPreview: null,
+    orderPreviews: [],
+    requiresAccountConnection: true,
+  };
+}
+
+function buildOrderAccountMismatchResponse(connectedEmail: string) {
+  return {
+    text: `I can only show orders for the connected Shopify account. You're currently connected as ${connectedEmail}.`,
+    source: "live" as const,
+    storeSnapshot: null,
+    recommendedProductsCollectionTitle: null,
+    recommendedProducts: [],
+    recommendedArticles: [],
+    orderPreview: null,
+    orderPreviews: [],
+    requiresAccountConnection: false,
+  };
+}
+
+async function getTrackedOrder(
+  orderNumber: string,
+  email: string,
+): Promise<OrderTrackingPreview | null> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const normalizedOrderNumber = orderNumber.startsWith("#") ? orderNumber : `#${orderNumber}`;
+  const targetOrderNumber = normalizedOrderNumber.replace(/^#/, "").trim().toUpperCase();
+  const customerOrders = await getCustomerOrdersByEmail(normalizedEmail);
+  const customerMatch = findOrderByNumber(
+    customerOrders,
+    targetOrderNumber,
+    false,
+    normalizedEmail,
+  );
+
+  if (customerMatch) {
+    return mapAdminOrderToPreview(customerMatch, normalizedEmail);
+  }
+
+  return await getTrackedOrderBySearch(targetOrderNumber, normalizedEmail);
+}
+
+async function getTrackedOrderBySearch(
+  targetOrderNumber: string,
+  normalizedEmail: string,
+): Promise<OrderTrackingPreview | null> {
+  const storeDomain = process.env.SHOPIFY_STORE_DOMAIN;
+  const adminToken = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
+
+  if (!storeDomain || !adminToken) {
+    return null;
+  }
+
+  const query = buildOrderEmailSearchQuery(normalizedEmail);
+  const response = await fetch(`https://${storeDomain}/admin/api/2025-10/graphql.json`, {
+    method: "POST",
+    signal: AbortSignal.timeout(10000),
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": adminToken,
+    },
+    body: JSON.stringify({
+      query: `
+        query TrackOrder($query: String!) {
+          orders(first: 25, query: $query, sortKey: PROCESSED_AT, reverse: true) {
+            nodes {
+              name
+              email
+              displayFulfillmentStatus
+              displayFinancialStatus
+              statusPageUrl
+              customer {
+                email
+              }
+              fulfillments {
+                status
+                createdAt
+                trackingInfo {
+                  company
+                  number
+                  url
+                }
+              }
+            }
+          }
+        }
+      `,
+      variables: {
+        query,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = (await response.json()) as {
+    data?: {
+      orders?: {
+        nodes: AdminOrderCard[];
+      };
+    };
+    errors?: Array<{ message: string }>;
+  };
+
+  if (payload.errors?.length) {
+    return null;
+  }
+
+  const order = findOrderByNumber(
+    payload.data?.orders?.nodes ?? [],
+    targetOrderNumber,
+    true,
+    normalizedEmail,
+  );
+
+  if (!order) {
+    return null;
+  }
+
+  return mapAdminOrderToPreview(order, normalizedEmail);
+}
+
+async function getOrdersByEmail(email: string): Promise<OrderTrackingPreview[]> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const customerOrders = await getCustomerOrdersByEmail(normalizedEmail);
+
+  if (customerOrders.length) {
+    return customerOrders
+      .map((entry) => mapAdminOrderToPreview(entry, normalizedEmail))
+      .slice(0, 5);
+  }
+
+  return await getOrdersByEmailSearch(normalizedEmail);
+}
+
+async function getOrdersByEmailSearch(normalizedEmail: string): Promise<OrderTrackingPreview[]> {
+  const storeDomain = process.env.SHOPIFY_STORE_DOMAIN;
+  const adminToken = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
+
+  if (!storeDomain || !adminToken) {
+    return [];
+  }
+
+  const response = await fetch(`https://${storeDomain}/admin/api/2025-10/graphql.json`, {
+    method: "POST",
+    signal: AbortSignal.timeout(10000),
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": adminToken,
+    },
+    body: JSON.stringify({
+      query: `
+        query OrdersByEmail($query: String!) {
+          orders(first: 10, query: $query, sortKey: PROCESSED_AT, reverse: true) {
+            nodes {
+              name
+              email
+              displayFulfillmentStatus
+              displayFinancialStatus
+              statusPageUrl
+              customer {
+                email
+              }
+              fulfillments {
+                status
+                createdAt
+                trackingInfo {
+                  company
+                  number
+                  url
+                }
+              }
+            }
+          }
+        }
+      `,
+      variables: {
+        query: buildOrderEmailSearchQuery(normalizedEmail),
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const payload = (await response.json()) as {
+    data?: {
+      orders?: {
+        nodes: AdminOrderCard[];
+      };
+    };
+    errors?: Array<{ message: string }>;
+  };
+
+  if (payload.errors?.length) {
+    console.error("Shopify orders by email search returned GraphQL errors", {
+      email: normalizedEmail,
+      errors: payload.errors,
+    });
+    return [];
+  }
+
+  return (payload.data?.orders?.nodes ?? [])
+    .filter((entry) => hasMatchingEmail(entry, normalizedEmail))
+    .map((entry) => mapAdminOrderToPreview(entry, normalizedEmail))
+    .slice(0, 5);
+}
+
+async function getCustomerOrdersByEmail(email: string): Promise<AdminOrderCard[]> {
+  const storeDomain = process.env.SHOPIFY_STORE_DOMAIN;
+  const adminToken = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
+
+  if (!storeDomain || !adminToken) {
+    return [];
+  }
+
+  const response = await fetch(`https://${storeDomain}/admin/api/2025-10/graphql.json`, {
+    method: "POST",
+    signal: AbortSignal.timeout(10000),
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": adminToken,
+    },
+    body: JSON.stringify({
+      query: `
+        query CustomerOrdersByEmail($query: String!) {
+          customers(first: 5, query: $query) {
+            nodes {
+              id
+              email
+              orders(first: 25, sortKey: PROCESSED_AT, reverse: true) {
+                nodes {
+                  name
+                  email
+                  displayFulfillmentStatus
+                  displayFinancialStatus
+                  statusPageUrl
+                  customer {
+                    email
+                  }
+                  fulfillments {
+                    status
+                    createdAt
+                    trackingInfo {
+                      company
+                      number
+                      url
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      `,
+      variables: {
+        query: buildCustomerEmailSearchQuery(email),
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    console.error("Shopify customer orders lookup failed", {
+      status: response.status,
+      email,
+    });
+    return [];
+  }
+
+  const payload = (await response.json()) as {
+    data?: {
+      customers?: {
+        nodes: AdminCustomerOrderLookup[];
+      };
+    };
+    errors?: Array<{ message: string }>;
+  };
+
+  if (payload.errors?.length) {
+    console.error("Shopify customer orders lookup returned GraphQL errors", {
+      email,
+      errors: payload.errors,
+    });
+    return [];
+  }
+
+  const matchingCustomers = (payload.data?.customers?.nodes ?? []).filter(
+    (customer) => !customer.email || customer.email.trim().toLowerCase() === email,
+  );
+  const orders = matchingCustomers
+    .flatMap((customer) => customer.orders.nodes)
+    .filter(
+      (entry, index, entries) =>
+        entries.findIndex((candidate) => candidate.name === entry.name) === index,
+    );
+
+  return orders;
+}
+
+function findOrderByNumber(
+  orders: AdminOrderCard[],
+  targetOrderNumber: string,
+  requireEmailMatch: boolean,
+  normalizedEmail: string,
+) {
+  return orders.find((entry) => {
+    const normalizedName = entry.name.replace(/^#/, "").trim().toUpperCase();
+    return (
+      normalizedName === targetOrderNumber &&
+      (!requireEmailMatch || hasMatchingEmail(entry, normalizedEmail))
+    );
+  });
+}
+
+function hasMatchingEmail(entry: AdminOrderCard, normalizedEmail: string) {
+  const candidateEmails = [entry.email, entry.customer?.email]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => value.trim().toLowerCase());
+
+  return candidateEmails.includes(normalizedEmail);
+}
+
+function mapAdminOrderToPreview(
+  entry: AdminOrderCard,
+  normalizedEmail: string,
+): OrderTrackingPreview {
+  const latestFulfillment = entry.fulfillments[0] ?? null;
+  const latestTracking = latestFulfillment?.trackingInfo[0] ?? null;
+  const statusLabel = humanizeOrderStatus(
+    entry.displayFulfillmentStatus ?? latestFulfillment?.status,
+  );
+
+  return {
+    orderNumber: entry.name,
+    status: statusLabel ?? "Processing",
+    eta: latestTracking?.url ? "Tracking available" : "Awaiting courier update",
+    lastEvent: latestTracking?.number
+      ? `${latestTracking.company ?? "Courier"} tracking ${latestTracking.number} is now available.`
+      : latestFulfillment?.createdAt
+        ? `Fulfilment updated on ${new Date(latestFulfillment.createdAt).toLocaleString("en-AU")}.`
+        : "Your order is being prepared for its next delivery update.",
+    financialStatus: humanizeOrderStatus(entry.displayFinancialStatus),
+    trackingNumber: latestTracking?.number ?? null,
+    trackingCompany: latestTracking?.company ?? null,
+    trackingUrl: latestTracking?.url ?? entry.statusPageUrl ?? null,
+    customerEmail: entry.email ?? entry.customer?.email ?? normalizedEmail,
+  };
+}
+
+function humanizeOrderStatus(status?: string | null) {
+  if (!status) {
+    return null;
+  }
+
+  return status
+    .toLowerCase()
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function buildOrderEmailSearchQuery(email: string) {
+  const escapedEmail = email.replace(/(["\\])/g, "\\$1");
+  return `email:"${escapedEmail}"`;
+}
+
+function buildCustomerEmailSearchQuery(email: string) {
+  const escapedEmail = email.replace(/(["\\])/g, "\\$1");
+  return `email:"${escapedEmail}"`;
+}
+
+async function resolveConnectedCustomerForOrderSupport(
+  accessToken?: string,
+): Promise<ConnectedCustomer | null> {
+  const trimmedToken = accessToken?.trim();
+  const storeDomain = process.env.SHOPIFY_STORE_DOMAIN;
+
+  if (!trimmedToken || !storeDomain) {
+    return null;
+  }
+
+  const accountConfig = await getCustomerAccountDiscovery(storeDomain);
+  return await fetchConnectedCustomer(accountConfig.graphql_api, trimmedToken);
+}
+
+async function getCustomerAccountDiscovery(storeDomain: string) {
+  const response = await fetch(`https://${storeDomain}/.well-known/customer-account-api`, {
+    signal: AbortSignal.timeout(10000),
+    headers: {
+      "User-Agent": "VPA Coach Order Support",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Shopify customer account discovery failed with ${response.status}`);
+  }
+
+  return (await response.json()) as {
+    graphql_api: string;
+  };
+}
+
+async function fetchConnectedCustomer(graphqlEndpoint: string, accessToken: string) {
+  const response = await fetch(graphqlEndpoint, {
+    method: "POST",
+    signal: AbortSignal.timeout(10000),
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: accessToken,
+      "User-Agent": "VPA Coach Order Support",
+    },
+    body: JSON.stringify({
+      query: `
+        query ConnectedCustomer {
+          customer {
+            id
+            firstName
+            lastName
+            displayName
+            emailAddress {
+              emailAddress
+            }
+          }
+        }
+      `,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Shopify customer profile request failed with ${response.status}`);
+  }
+
+  const payload = (await response.json()) as {
+    data?: {
+      customer?: {
+        id: string;
+        firstName: string | null;
+        lastName: string | null;
+        displayName: string | null;
+        emailAddress: {
+          emailAddress: string;
+        } | null;
+      } | null;
+    };
+    errors?: Array<{ message: string }>;
+  };
+
+  if (payload.errors?.length) {
+    throw new Error(payload.errors.map((error) => error.message).join(", "));
+  }
+
+  const customer = payload.data?.customer;
+
+  if (!customer?.emailAddress?.emailAddress) {
+    throw new Error("Connected Shopify customer profile did not include an email address.");
+  }
+
+  return {
+    id: customer.id,
+    email: customer.emailAddress.emailAddress,
+    firstName: customer.firstName,
+    lastName: customer.lastName,
+    displayName:
+      customer.displayName?.trim() ||
+      [customer.firstName, customer.lastName].filter(Boolean).join(" ").trim() ||
+      customer.emailAddress.emailAddress,
+  } satisfies ConnectedCustomer;
+}

@@ -11,6 +11,8 @@
 import type * as assistant from "../assistant.js";
 import type * as chat from "../chat.js";
 import type * as customerConnect from "../customerConnect.js";
+import type * as customerState from "../customerState.js";
+import type * as customerStateStore from "../customerStateStore.js";
 import type * as todos from "../todos.js";
 import type * as workoutSeed from "../workoutSeed.js";
 import type * as workouts from "../workouts.js";
@@ -21,6 +23,8 @@ declare const fullApi: ApiFromModules<{
   assistant: typeof assistant;
   chat: typeof chat;
   customerConnect: typeof customerConnect;
+  customerState: typeof customerState;
+  customerStateStore: typeof customerStateStore;
   todos: typeof todos;
   workoutSeed: typeof workoutSeed;
   workouts: typeof workouts;

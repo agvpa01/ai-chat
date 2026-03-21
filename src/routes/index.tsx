@@ -1,10 +1,25 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { Link, createFileRoute } from "@tanstack/react-router";
+import { BicepsFlexed } from "lucide-react";
 import { startTransition, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { api } from "../../convex/_generated/api";
 import { CustomerAuthExperience } from "../components/CustomerAuthExperience";
-import { WorkoutCardGrid, type WorkoutCatalogWorkout } from "../components/WorkoutCardGrid";
+import {
+  WorkoutCardGrid,
+  WorkoutDetailCard,
+  type WorkoutActivityLog,
+  type WorkoutCatalogWorkout,
+} from "../components/WorkoutCardGrid";
 import { convexHttpClient } from "../lib/convex-http";
+import {
+  mergeSavedThreads,
+  mergeWorkoutActivityEntries,
+  pickPreferredThreadId,
+  sanitizeSavedThreads,
+  sanitizeWorkoutActivityEntries,
+  type SavedChatThread,
+  type WorkoutActivityEntry,
+} from "../lib/customer-state";
 import {
   clearStoredCustomerSession,
   getCustomerAuthRequestMode,
@@ -64,16 +79,38 @@ type ChatCartItem = {
   selections: number;
 };
 
-type SavedChatThread = {
+type WorkoutEventEntry = {
   id: string;
   title: string;
-  messages: DemoMessage[];
-  activeWorkoutId: string;
-  updatedAt: number;
+  subtitle: string;
+  description: string;
+  publishedAt: number;
+  ctaLabel: string;
 };
 
 const CHAT_HISTORY_STORAGE_KEY = "vpa-chat-history-v1";
 const CHAT_CART_STORAGE_KEY = "vpa-chat-cart-v1";
+const WORKOUT_ACTIVITY_STORAGE_KEY = "vpa-workout-activity-v1";
+const WORKOUT_ACTIVITY_SEEN_AT_STORAGE_KEY = "vpa-workout-activity-seen-at-v1";
+
+const workoutEvents: WorkoutEventEntry[] = [
+  {
+    id: "event-16-day-challenge",
+    title: "16 Day Workout Challenge",
+    subtitle: "Challenge Launch",
+    description: "Daily guided sessions, progress check-ins, and a clean streak to follow in chat.",
+    publishedAt: new Date("2026-03-20T09:00:00+08:00").getTime(),
+    ctaLabel: "16 day workout challenge",
+  },
+  {
+    id: "event-core-reset-week",
+    title: "Core Reset Week",
+    subtitle: "Starts Monday",
+    description: "A short abs-and-mobility block built for home sessions and quick recovery days.",
+    publishedAt: new Date("2026-03-18T08:30:00+08:00").getTime(),
+    ctaLabel: "Show core workouts",
+  },
+];
 
 function App() {
   const [messages, setMessages] = useState<DemoMessage[]>(initialMessages);
@@ -91,13 +128,40 @@ function App() {
   const [cartItems, setCartItems] = useState<ChatCartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isCartBumping, setIsCartBumping] = useState(false);
+  const [workoutActivity, setWorkoutActivity] = useState<WorkoutActivityEntry[]>([]);
+  const [isActivityOpen, setIsActivityOpen] = useState(false);
+  const [lastActivitySeenAt, setLastActivitySeenAt] = useState(0);
   const [customerSession, setCustomerSession] = useState<CustomerAuthSession | null>(null);
+  const [hasHydratedConnectedState, setHasHydratedConnectedState] = useState(false);
   const skipNextThreadSaveRef = useRef(false);
+  const skipNextConnectedStateSaveRef = useRef(false);
+  const savedThreadsRef = useRef<SavedChatThread[]>([]);
+  const workoutActivityRef = useRef<WorkoutActivityEntry[]>([]);
+  const lastActivitySeenAtRef = useRef(0);
+  const currentThreadIdRef = useRef(currentThreadId);
+
+  useEffect(() => {
+    savedThreadsRef.current = savedThreads;
+  }, [savedThreads]);
+
+  useEffect(() => {
+    workoutActivityRef.current = workoutActivity;
+  }, [workoutActivity]);
+
+  useEffect(() => {
+    lastActivitySeenAtRef.current = lastActivitySeenAt;
+  }, [lastActivitySeenAt]);
+
+  useEffect(() => {
+    currentThreadIdRef.current = currentThreadId;
+  }, [currentThreadId]);
 
   useEffect(() => {
     const storedThreads = readSavedThreads();
     const storedCartItems = readSavedCartItems();
+    const storedWorkoutActivity = readWorkoutActivity();
     const storedCustomerSession = readStoredCustomerSession();
+    const storedActivitySeenAt = readWorkoutActivitySeenAt();
 
     if (storedThreads.length) {
       const latestThread = storedThreads[0];
@@ -111,12 +175,96 @@ function App() {
       setCartItems(storedCartItems);
     }
 
+    if (storedWorkoutActivity.length) {
+      setWorkoutActivity(storedWorkoutActivity);
+    }
+
     if (storedCustomerSession) {
       setCustomerSession(storedCustomerSession);
     }
 
+    if (storedActivitySeenAt > 0) {
+      setLastActivitySeenAt(storedActivitySeenAt);
+    }
+
     setHasLoadedHistory(true);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!hasLoadedHistory) {
+      return;
+    }
+
+    const connectedSession = customerSession;
+
+    if (!connectedSession) {
+      setHasHydratedConnectedState(true);
+      return;
+    }
+
+    const connectedAccessToken = connectedSession.accessToken;
+
+    setHasHydratedConnectedState(false);
+
+    async function hydrateConnectedState() {
+      try {
+        const remoteState = await convexHttpClient.action(api.customerState.loadConnectedState, {
+          accessToken: connectedAccessToken,
+        });
+
+        if (cancelled) {
+          return;
+        }
+
+        const mergedThreads = mergeSavedThreads(
+          savedThreadsRef.current,
+          sanitizeSavedThreads(remoteState.threads),
+        );
+        const mergedWorkoutActivity = mergeWorkoutActivityEntries(
+          workoutActivityRef.current,
+          sanitizeWorkoutActivityEntries(remoteState.workoutActivity),
+        );
+        const mergedLastActivitySeenAt = Math.max(
+          lastActivitySeenAtRef.current,
+          typeof remoteState.lastActivitySeenAt === "number" ? remoteState.lastActivitySeenAt : 0,
+        );
+        const preferredThreadId = pickPreferredThreadId(mergedThreads, [
+          currentThreadIdRef.current,
+          remoteState.currentThreadId,
+        ]);
+        const selectedThread = mergedThreads.find((thread) => thread.id === preferredThreadId);
+
+        skipNextConnectedStateSaveRef.current = true;
+
+        startTransition(() => {
+          setSavedThreads(mergedThreads);
+          setWorkoutActivity(mergedWorkoutActivity);
+          setLastActivitySeenAt(mergedLastActivitySeenAt);
+
+          if (selectedThread) {
+            skipNextThreadSaveRef.current = true;
+            setCurrentThreadId(selectedThread.id);
+            setMessages(selectedThread.messages);
+            setActiveWorkoutId(selectedThread.activeWorkoutId);
+          }
+        });
+      } catch {
+        return;
+      } finally {
+        if (!cancelled) {
+          setHasHydratedConnectedState(true);
+        }
+      }
+    }
+
+    void hydrateConnectedState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [customerSession, hasLoadedHistory]);
 
   useEffect(() => {
     let cancelled = false;
@@ -179,6 +327,37 @@ function App() {
       return;
     }
 
+    if (shouldAttachWorkoutCards) {
+      startTransition(() => {
+        setMessages((current) => [
+          ...current,
+          userMessage,
+          ...attachWorkoutCardsToMessages(reply.messages, workoutCardSlugs),
+        ]);
+        if (reply.nextWorkoutId) {
+          setActiveWorkoutId(reply.nextWorkoutId);
+        }
+        setDraft("");
+      });
+      return;
+    }
+
+    if (!customerSession && looksLikeOrderSupportRequest(trimmed)) {
+      const orderAuthMessage: DemoMessage = {
+        id: `auth-order-${Date.now()}`,
+        role: "assistant",
+        kind: "auth",
+        text: "Connect your Shopify account to track orders or view order history in chat. For privacy, we only show orders for the signed-in Shopify customer.",
+        initialMode: "login",
+      };
+
+      startTransition(() => {
+        setMessages((current) => [...current, userMessage, orderAuthMessage]);
+        setDraft("");
+      });
+      return;
+    }
+
     startTransition(() => {
       setMessages((current) => [...current, userMessage]);
       if (reply.nextWorkoutId) {
@@ -193,6 +372,8 @@ function App() {
       const response = await convexHttpClient.action(api.chat.reply, {
         message: trimmed,
         workoutId: reply.nextWorkoutId ?? activeWorkoutId,
+        customerEmail: customerSession?.customer.email,
+        customerAccessToken: customerSession?.accessToken,
       });
       const assistantLiveMessage: DemoMessage = {
         id: `assistant-live-${Date.now()}`,
@@ -202,6 +383,9 @@ function App() {
         products: response.recommendedProducts,
         productSectionTitle: response.recommendedProductsCollectionTitle ?? undefined,
         articles: response.recommendedArticles,
+        orderPreview: response.orderPreview ?? undefined,
+        orderPreviews: response.orderPreviews ?? undefined,
+        requiresAccountConnection: response.requiresAccountConnection ?? undefined,
         workoutSlugs: workoutCardSlugs,
       };
 
@@ -297,6 +481,57 @@ function App() {
   }, [cartItems, hasLoadedHistory]);
 
   useEffect(() => {
+    if (!hasLoadedHistory) {
+      return;
+    }
+
+    writeWorkoutActivity(workoutActivity);
+  }, [hasLoadedHistory, workoutActivity]);
+
+  useEffect(() => {
+    if (!hasLoadedHistory) {
+      return;
+    }
+
+    writeWorkoutActivitySeenAt(lastActivitySeenAt);
+  }, [hasLoadedHistory, lastActivitySeenAt]);
+
+  useEffect(() => {
+    const connectedSession = customerSession;
+
+    if (!hasLoadedHistory || !hasHydratedConnectedState || !connectedSession) {
+      return;
+    }
+
+    const connectedAccessToken = connectedSession.accessToken;
+    const connectedSessionExpiresAt = connectedSession.expiresAt;
+
+    if (skipNextConnectedStateSaveRef.current) {
+      skipNextConnectedStateSaveRef.current = false;
+      return;
+    }
+
+    void convexHttpClient
+      .action(api.customerState.saveConnectedState, {
+        accessToken: connectedAccessToken,
+        sessionExpiresAt: connectedSessionExpiresAt,
+        currentThreadId,
+        threads: savedThreads,
+        workoutActivity,
+        lastActivitySeenAt,
+      })
+      .catch(() => {});
+  }, [
+    currentThreadId,
+    customerSession,
+    hasHydratedConnectedState,
+    hasLoadedHistory,
+    lastActivitySeenAt,
+    savedThreads,
+    workoutActivity,
+  ]);
+
+  useEffect(() => {
     if (!isCartOpen) {
       return;
     }
@@ -316,6 +551,29 @@ function App() {
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [isCartOpen]);
+
+  useEffect(() => {
+    if (!isActivityOpen) {
+      return;
+    }
+
+    setLastActivitySeenAt(Date.now());
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsActivityOpen(false);
+      }
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isActivityOpen]);
 
   useEffect(() => {
     if (!isSearchOpen) {
@@ -341,6 +599,7 @@ function App() {
     setDraft("");
     setActiveWorkoutId(workoutCatalog[0]?.slug ?? workouts[0].id);
     setIsCartOpen(false);
+    setIsActivityOpen(false);
     setIsSearchOpen(false);
     setSearchQuery("");
     setOpenThreadMenuId(null);
@@ -353,9 +612,24 @@ function App() {
     setActiveWorkoutId(thread.activeWorkoutId);
     setDraft("");
     setIsCartOpen(false);
+    setIsActivityOpen(false);
     setIsSearchOpen(false);
     setSearchQuery("");
     setOpenThreadMenuId(null);
+  }
+
+  function recordWorkoutActivity(activity: WorkoutActivityLog) {
+    setWorkoutActivity((current) =>
+      [
+        {
+          ...activity,
+          id: `${activity.workoutSlug}-${activity.type}-${activity.timestamp}`,
+        },
+        ...current,
+      ]
+        .sort((left, right) => right.timestamp - left.timestamp)
+        .slice(0, 18),
+    );
   }
 
   function renameSavedThread(threadId: string) {
@@ -468,9 +742,29 @@ function App() {
     });
   }
 
+  function openWorkoutDetail(workout: WorkoutCatalogWorkout) {
+    setActiveWorkoutId(workout.slug);
+
+    startTransition(() => {
+      setMessages((current) => [
+        ...current,
+        {
+          id: `assistant-workout-${Date.now()}-${workout.slug}`,
+          role: "assistant",
+          kind: "text",
+          text: `Here’s ${workout.name}.`,
+          workoutDetailSlug: workout.slug,
+        },
+      ]);
+    });
+  }
+
   const cartSubtotal = cartItems.reduce((sum, item) => sum + item.bundlePrice * item.selections, 0);
   const checkoutUrl = buildCheckoutUrl(cartItems);
   const cartCount = cartItems.reduce((sum, item) => sum + item.selections, 0);
+  const activityBadgeCount =
+    workoutActivity.filter((entry) => entry.timestamp > lastActivitySeenAt).length +
+    workoutEvents.filter((event) => event.publishedAt > lastActivitySeenAt).length;
   const starterChatLabels = [
     "Give me recommended product list",
     "Show me best selling products",
@@ -479,6 +773,15 @@ function App() {
     "Track my VPA order",
   ];
   const hasUserMessages = messages.some((message) => message.role === "user");
+  const sidebarAccountName = customerSession?.customer.displayName || "VPA AU";
+  const sidebarAccountSubtitle = customerSession?.customer.email || null;
+  const sidebarAccountInitials = getInitials(
+    customerSession?.customer.displayName ||
+      [customerSession?.customer.firstName, customerSession?.customer.lastName]
+        .filter(Boolean)
+        .join(" ") ||
+      "VPA AU",
+  );
 
   return (
     <main className="min-h-screen bg-[#F6F7F2] text-[#1D1D1D]">
@@ -628,6 +931,27 @@ function App() {
                   </div>
                 )}
               </div>
+
+              <div className="border-t border-[#1D1D1D]/10 p-4">
+                <Link
+                  to="/account"
+                  className="flex items-center gap-3 rounded-[1.15rem] border border-[#1D1D1D]/8 bg-[#F2F3F0] px-3 py-2.5 text-[#1D1D1D] no-underline transition hover:border-[#1D1D1D]/14 hover:bg-[#ECEEE8]"
+                >
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#22B8A9] text-base font-semibold text-white">
+                    {sidebarAccountInitials}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate text-[0.98rem] font-semibold leading-5">
+                      {sidebarAccountName}
+                    </div>
+                    {sidebarAccountSubtitle ? (
+                      <div className="truncate text-[0.9rem] leading-5 text-[#1D1D1D]/64">
+                        {sidebarAccountSubtitle}
+                      </div>
+                    ) : null}
+                  </div>
+                </Link>
+              </div>
             </div>
           ) : (
             <div className="flex w-full flex-col items-center px-3 py-4">
@@ -714,21 +1038,13 @@ function App() {
                 </button>
               </div>
 
-              <div className="mt-auto flex h-11 w-11 items-center justify-center rounded-full bg-[#3B7539] text-white">
-                <svg
-                  aria-hidden="true"
-                  viewBox="0 0 24 24"
-                  className="h-6 w-6"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M20 21a8 8 0 0 0-16 0" />
-                  <circle cx="12" cy="8" r="4" />
-                </svg>
-              </div>
+              <Link
+                to="/account"
+                title={`${sidebarAccountName} - ${sidebarAccountSubtitle}`}
+                className="mt-auto flex h-11 w-11 items-center justify-center rounded-full bg-[#22B8A9] text-sm font-semibold text-white no-underline transition hover:scale-105"
+              >
+                {sidebarAccountInitials}
+              </Link>
             </div>
           )}
         </aside>
@@ -868,14 +1184,25 @@ function App() {
                         {"workoutSlugs" in message && message.workoutSlugs?.length ? (
                           <WorkoutCardGrid
                             workouts={selectWorkoutCards(message.workoutSlugs, workoutCatalog)}
-                            onAskAboutWorkout={(workout) => {
-                              setActiveWorkoutId(workout.slug);
-                              setDraft(
-                                `Tell me more about ${workout.name} and list the exercises.`,
-                              );
-                            }}
+                            onSelectWorkout={openWorkoutDetail}
                           />
                         ) : null}
+
+                        {"workoutDetailSlug" in message && message.workoutDetailSlug
+                          ? (() => {
+                              const workoutDetail = findWorkoutDetail(
+                                message.workoutDetailSlug,
+                                workoutCatalog,
+                              );
+
+                              return workoutDetail ? (
+                                <WorkoutDetailCard
+                                  workout={workoutDetail}
+                                  onTrackWorkoutActivity={recordWorkoutActivity}
+                                />
+                              ) : null;
+                            })()
+                          : null}
 
                         {message.kind === "auth" ? (
                           <CustomerAuthExperience
@@ -886,23 +1213,36 @@ function App() {
                           />
                         ) : null}
 
+                        {"requiresAccountConnection" in message &&
+                        message.requiresAccountConnection ? (
+                          <CustomerAuthExperience
+                            initialMode="login"
+                            session={customerSession}
+                            onLogout={clearCustomerSession}
+                            variant="response"
+                          />
+                        ) : null}
+
                         {message.kind === "order" ? (
-                          <div className="mt-5 rounded-[1.2rem] border border-[#1D1D1D]/10 bg-[#F6F7F2] p-4">
-                            <div className="flex flex-wrap items-center justify-between gap-3">
-                              <h2 className="m-0 text-base font-semibold text-[#1D1D1D]">
-                                {sampleOrder.orderNumber}
-                              </h2>
-                              <span className="rounded-full bg-[#3B7539] px-3 py-1 text-sm font-semibold text-white">
-                                {sampleOrder.status}
-                              </span>
-                            </div>
-                            <p className="mt-2 mb-0 text-sm leading-6 text-[#1D1D1D]/66">
-                              {sampleOrder.lastEvent}
-                            </p>
-                          </div>
+                          <OrderStatusCard order={sampleOrder} customerSession={customerSession} />
+                        ) : null}
+
+                        {"orderPreview" in message && message.orderPreview ? (
+                          <OrderStatusCard
+                            order={message.orderPreview}
+                            customerSession={customerSession}
+                          />
+                        ) : null}
+
+                        {"orderPreviews" in message && message.orderPreviews?.length ? (
+                          <OrderStatusGrid
+                            orders={message.orderPreviews}
+                            customerSession={customerSession}
+                          />
                         ) : null}
                       </article>
                     ))}
+                    {isSubmitting ? <AssistantTypingIndicator /> : null}
                   </div>
                 </div>
               </div>
@@ -927,7 +1267,28 @@ function App() {
                       <div className="flex items-center gap-3">
                         <button
                           type="button"
-                          onClick={() => setIsCartOpen((current) => !current)}
+                          onClick={() => {
+                            setIsCartOpen(false);
+                            setIsActivityOpen((current) => !current);
+                          }}
+                          aria-label="Open workout activity"
+                          aria-expanded={isActivityOpen}
+                          aria-controls="chat-activity-sheet"
+                          className="relative flex h-11 w-11 items-center justify-center text-[#1D1D1D]"
+                        >
+                          <BicepsFlexed aria-hidden="true" className="h-5 w-5" />
+                          {activityBadgeCount > 0 ? (
+                            <span className="absolute -top-1 right-0 flex min-h-5 min-w-5 items-center justify-center rounded-full bg-[#3B7539] px-1.5 text-center text-[0.65rem] font-extrabold leading-none text-white">
+                              {activityBadgeCount}
+                            </span>
+                          ) : null}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsActivityOpen(false);
+                            setIsCartOpen((current) => !current);
+                          }}
                           aria-label="Open cart"
                           aria-expanded={isCartOpen}
                           aria-controls="chat-cart-sheet"
@@ -1143,6 +1504,144 @@ function App() {
         </div>
       ) : null}
 
+      {isActivityOpen ? (
+        <div
+          className="fixed inset-0 z-20 bg-black/18 backdrop-blur-[2px] animate-in fade-in duration-200"
+          onClick={() => setIsActivityOpen(false)}
+        >
+          <aside
+            id="chat-activity-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="chat-activity-title"
+            className="absolute inset-y-0 right-0 flex h-full w-full max-w-[34rem] flex-col border-l border-[#1D1D1D]/10 bg-[#FCFCF8] p-5 shadow-[-24px_0_60px_rgba(29,29,29,0.16)] animate-in slide-in-from-right duration-300 sm:p-6"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-5 flex items-center justify-between gap-3 border-b border-[#1D1D1D]/8 pb-4">
+              <div>
+                <div className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-[#1D1D1D]/44">
+                  Workout Activity
+                </div>
+                <div
+                  id="chat-activity-title"
+                  className="mt-1 text-[1.35rem] font-semibold text-black"
+                >
+                  History and events
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsActivityOpen(false)}
+                aria-label="Close workout activity"
+                className="h-10 w-10 rounded-full border border-[#1D1D1D]/10 bg-white text-sm font-semibold text-black transition-colors hover:bg-[#F6F7F2]"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 space-y-6 overflow-y-auto pr-1">
+              <section className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-[#1D1D1D]/48">
+                    Recent workout history
+                  </div>
+                  <div className="text-xs text-[#1D1D1D]/42">
+                    {workoutActivity.length} update{workoutActivity.length !== 1 ? "s" : ""}
+                  </div>
+                </div>
+                {workoutActivity.length ? (
+                  <div className="space-y-3">
+                    {workoutActivity.map((entry) => (
+                      <article
+                        key={entry.id}
+                        className="rounded-[1.2rem] border border-[#1D1D1D]/10 bg-white p-4"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-semibold text-[#1D1D1D]">
+                              {entry.workoutName}
+                            </div>
+                            <div className="mt-1 text-sm leading-6 text-[#1D1D1D]/62">
+                              {entry.type === "completed"
+                                ? `Completed ${entry.completedExercises}/${entry.totalExercises} exercises`
+                                : `Started a ${entry.totalExercises}-exercise session`}
+                            </div>
+                          </div>
+                          <span
+                            className={`rounded-full px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.12em] ${
+                              entry.type === "completed"
+                                ? "bg-[#E9F6EA] text-[#2F6A4A]"
+                                : "bg-[#EEF4EE] text-[#173A40]"
+                            }`}
+                          >
+                            {entry.type}
+                          </span>
+                        </div>
+                        <div className="mt-3 text-[0.72rem] font-medium uppercase tracking-[0.12em] text-[#1D1D1D]/42">
+                          {formatActivityDate(entry.timestamp)}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-[1rem] border border-[#1D1D1D]/8 bg-white px-4 py-5 text-sm text-[#1D1D1D]/62">
+                    Start a workout from the chat and it will show up here.
+                  </div>
+                )}
+              </section>
+
+              <section className="space-y-3">
+                <div className="text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-[#1D1D1D]/48">
+                  Events and challenges
+                </div>
+                <div className="space-y-3">
+                  {workoutEvents.map((event) => (
+                    <article
+                      key={event.id}
+                      className="rounded-[1.2rem] border border-[#1D1D1D]/10 bg-[linear-gradient(180deg,#F7FBF8_0%,#FFFFFF_100%)] p-4"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-[#2F6A4A]">
+                            {event.subtitle}
+                          </div>
+                          <div className="mt-1 text-[1.05rem] font-semibold text-[#1D1D1D]">
+                            {event.title}
+                          </div>
+                        </div>
+                        {event.publishedAt > lastActivitySeenAt ? (
+                          <span className="rounded-full bg-[#173A40] px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-white">
+                            New
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="mt-3 mb-0 text-sm leading-6 text-[#1D1D1D]/66">
+                        {event.description}
+                      </p>
+                      <div className="mt-4 flex items-center justify-between gap-3">
+                        <div className="text-[0.72rem] font-medium uppercase tracking-[0.12em] text-[#1D1D1D]/42">
+                          {formatActivityDate(event.publishedAt)}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDraft(event.ctaLabel);
+                            setIsActivityOpen(false);
+                          }}
+                          className="rounded-full border border-[#1D1D1D]/10 bg-white px-3 py-2 text-xs font-semibold text-[#1D1D1D]"
+                        >
+                          {event.ctaLabel}
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            </div>
+          </aside>
+        </div>
+      ) : null}
+
       {isSearchOpen ? (
         <div
           className="fixed inset-0 z-30 bg-[#1D1D1D]/16 p-4 sm:p-6"
@@ -1292,6 +1791,264 @@ function ArticleCard({ article }: { article: RecommendedArticle }) {
       </div>
     </article>
   );
+}
+
+function OrderStatusCard({
+  order,
+  customerSession,
+}: {
+  order: typeof sampleOrder;
+  customerSession: CustomerAuthSession | null;
+}) {
+  const orderSteps = buildOrderSteps(order);
+
+  return (
+    <article className="mt-5 overflow-hidden rounded-[1.5rem] border border-[#1D1D1D]/10 bg-white">
+      <div className="border-b border-[#1D1D1D]/8 bg-[linear-gradient(135deg,#F7FBF8_0%,#EEF7F0_100%)] p-5 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="space-y-2">
+            <div className="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-[#2F6A4A]">
+              Order Tracking
+            </div>
+            <h2 className="m-0 text-[1.85rem] font-semibold tracking-[-0.05em] text-[#173A40]">
+              {order.orderNumber}
+            </h2>
+            <p className="m-0 max-w-xl text-sm leading-7 text-[#173A40]/70 sm:text-base">
+              A cleaner place for shipping progress, ETA updates, and fulfilment events without
+              sending the customer away from chat.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <span className="rounded-full bg-[#3B7539] px-3 py-1 text-sm font-semibold text-white">
+              {order.status}
+            </span>
+            <span className="rounded-full border border-[#173A40]/10 bg-white px-3 py-1 text-sm font-semibold text-[#173A40]">
+              {order.eta}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-5 p-5 sm:p-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(18rem,0.9fr)]">
+        <div className="space-y-4">
+          <div className="rounded-[1.2rem] border border-[#1D1D1D]/10 bg-[#F8FBF8] p-4">
+            <div className="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-[#2F6A4A]">
+              Latest update
+            </div>
+            <p className="mt-3 mb-0 text-sm leading-7 text-[#173A40]/74 sm:text-base">
+              {order.lastEvent}
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            <div className="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-[#173A40]/58">
+              Fulfilment Timeline
+            </div>
+            <div className="space-y-3">
+              {orderSteps.map((step) => (
+                <div
+                  key={step.label}
+                  className={`rounded-[1.1rem] border px-4 py-3 ${
+                    step.state === "done"
+                      ? "border-[#3B7539]/14 bg-[#F4FAF4]"
+                      : step.state === "active"
+                        ? "border-[#173A40]/12 bg-white shadow-[0_10px_24px_rgba(23,58,64,0.05)]"
+                        : "border-[#1D1D1D]/10 bg-[#FAFBF8]"
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <span
+                      className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                        step.state === "done"
+                          ? "bg-[#3B7539] text-white"
+                          : step.state === "active"
+                            ? "bg-[#173A40] text-white"
+                            : "bg-[#E4E8E0] text-[#173A40]/62"
+                      }`}
+                    >
+                      {step.state === "done" ? "✓" : step.index}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-[#173A40]">{step.label}</div>
+                      <div className="mt-1 text-sm leading-6 text-[#173A40]/64">{step.detail}</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <aside className="space-y-4">
+          <div className="rounded-[1.2rem] border border-[#1D1D1D]/10 bg-[linear-gradient(180deg,#FFFFFF_0%,#F6F8F3_100%)] p-4">
+            <div className="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-[#2F6A4A]">
+              Tracking snapshot
+            </div>
+            <div className="mt-4 space-y-3">
+              <div className="rounded-[1rem] border border-[#173A40]/8 bg-white px-3 py-3">
+                <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#173A40]/56">
+                  Status
+                </div>
+                <div className="mt-1 text-base font-semibold text-[#173A40]">{order.status}</div>
+              </div>
+              <div className="rounded-[1rem] border border-[#173A40]/8 bg-white px-3 py-3">
+                <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#173A40]/56">
+                  ETA
+                </div>
+                <div className="mt-1 text-base font-semibold text-[#173A40]">{order.eta}</div>
+              </div>
+              {order.financialStatus ? (
+                <div className="rounded-[1rem] border border-[#173A40]/8 bg-white px-3 py-3">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#173A40]/56">
+                    Payment
+                  </div>
+                  <div className="mt-1 text-base font-semibold text-[#173A40]">
+                    {order.financialStatus}
+                  </div>
+                </div>
+              ) : null}
+              {order.trackingNumber ? (
+                <div className="rounded-[1rem] border border-[#173A40]/8 bg-white px-3 py-3">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#173A40]/56">
+                    Tracking number
+                  </div>
+                  <div className="mt-1 text-base font-semibold text-[#173A40]">
+                    {order.trackingNumber}
+                  </div>
+                  {order.trackingCompany ? (
+                    <div className="mt-1 text-sm text-[#173A40]/64">{order.trackingCompany}</div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+            {order.trackingUrl ? (
+              <a
+                href={order.trackingUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-4 inline-flex rounded-full bg-[#173A40] px-4 py-2 text-sm font-semibold text-white no-underline"
+              >
+                Open tracking
+              </a>
+            ) : null}
+          </div>
+
+          <div className="rounded-[1.2rem] border border-[#1D1D1D]/10 bg-[#F8FBF8] p-4">
+            <div className="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-[#2F6A4A]">
+              Account status
+            </div>
+            {customerSession ? (
+              <div className="mt-3 space-y-2">
+                <div className="text-base font-semibold tracking-[-0.02em] text-[#173A40]">
+                  Connected as {customerSession.customer.email}
+                </div>
+                <p className="m-0 text-sm leading-6 text-[#173A40]/68">
+                  This is where live Shopify order cards, tracking links, and delivery events can
+                  appear for the signed-in customer.
+                </p>
+                <Link
+                  to="/account"
+                  className="mt-2 inline-flex rounded-full border border-[#173A40]/10 bg-white px-4 py-2 text-sm font-semibold text-[#173A40] no-underline"
+                >
+                  Manage account
+                </Link>
+              </div>
+            ) : (
+              <div className="mt-3 space-y-2">
+                <div className="text-base font-semibold tracking-[-0.02em] text-[#173A40]">
+                  Connect your Shopify account
+                </div>
+                <p className="m-0 text-sm leading-6 text-[#173A40]/68">
+                  Once connected, we can swap this preview for the customer’s real orders, delivery
+                  updates, and fulfilment history.
+                </p>
+                <Link
+                  to="/account"
+                  className="mt-2 inline-flex rounded-full bg-[#173A40] px-4 py-2 text-sm font-semibold text-white no-underline"
+                >
+                  Connect account
+                </Link>
+              </div>
+            )}
+          </div>
+        </aside>
+      </div>
+    </article>
+  );
+}
+
+function OrderStatusGrid({
+  orders,
+  customerSession,
+}: {
+  orders: Array<typeof sampleOrder>;
+  customerSession: CustomerAuthSession | null;
+}) {
+  return (
+    <section className="mt-5 space-y-4">
+      <div className="text-[0.8rem] font-semibold uppercase tracking-[0.22em] text-black">
+        Order Matches
+      </div>
+      <div className="space-y-5">
+        {orders.map((order) => (
+          <OrderStatusCard
+            key={`${order.orderNumber}-${order.customerEmail ?? "guest"}`}
+            order={order}
+            customerSession={customerSession}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function looksLikeOrderSupportRequest(input: string) {
+  const lowered = input.toLowerCase();
+
+  return (
+    lowered.includes("track order") ||
+    lowered.includes("track my order") ||
+    lowered.includes("track this order") ||
+    lowered.includes("order status") ||
+    lowered.includes("where is my order") ||
+    lowered.includes("order history") ||
+    (lowered.includes("orders") && lowered.includes("email")) ||
+    (lowered.includes("order") && lowered.includes("#"))
+  );
+}
+
+function buildOrderSteps(order: typeof sampleOrder) {
+  const normalizedStatus = order.status.toLowerCase();
+  const isInTransit = normalizedStatus.includes("transit");
+  const isDelivered = normalizedStatus.includes("delivered");
+
+  return [
+    {
+      index: 1,
+      label: "Order confirmed",
+      detail: "Payment accepted and the order is in the warehouse queue.",
+      state: "done" as const,
+    },
+    {
+      index: 2,
+      label: "Packed and handed over",
+      detail: order.lastEvent,
+      state: "done" as const,
+    },
+    {
+      index: 3,
+      label: "In transit",
+      detail: isInTransit || isDelivered ? order.eta : "Waiting for the courier scan update.",
+      state: isInTransit || isDelivered ? ("active" as const) : ("upcoming" as const),
+    },
+    {
+      index: 4,
+      label: "Delivered",
+      detail: isDelivered ? "Delivery confirmed." : "Delivery completion will appear here.",
+      state: isDelivered ? ("active" as const) : ("upcoming" as const),
+    },
+  ];
 }
 
 function ArticleGrid({
@@ -1870,6 +2627,21 @@ function ProductCard({
   );
 }
 
+function AssistantTypingIndicator() {
+  return (
+    <article aria-live="polite" aria-label="VPA Coach is typing">
+      <div className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-[#1D1D1D]/50">
+        VPA coach
+      </div>
+      <div className="inline-flex items-center gap-2 rounded-[1.35rem] border border-[#1D1D1D]/10 bg-white px-4 py-3 shadow-[0_10px_28px_rgba(23,58,64,0.06)]">
+        <span className="typing-dot" />
+        <span className="typing-dot typing-dot-delay-1" />
+        <span className="typing-dot typing-dot-delay-2" />
+      </div>
+    </article>
+  );
+}
+
 function ImagePlaceholder({ label, size }: { label: string; size: "small" | "large" }) {
   return (
     <div className="flex h-full w-full flex-col items-center justify-center bg-[radial-gradient(circle_at_top,#F7FAF1,transparent_65%),linear-gradient(180deg,#EDF2E7_0%,#E2E9DA_100%)] px-3 text-[#6B7167]">
@@ -2007,6 +2779,19 @@ function getThreadDateLabel(updatedAt: number) {
   return "Older";
 }
 
+function getInitials(value: string) {
+  const parts = value.trim().split(/\s+/).filter(Boolean);
+
+  if (!parts.length) {
+    return "VP";
+  }
+
+  return parts
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+}
+
 function isWorkoutListRequest(text: string) {
   const lowered = text.toLowerCase();
   const withoutSupplementPhrases = lowered
@@ -2046,6 +2831,13 @@ function selectWorkoutCards(workoutSlugs: string[], workoutCatalog: WorkoutCatal
   return workoutSlugs
     .map((slug) => workoutBySlug.get(slug) ?? buildFallbackWorkoutCard(slug))
     .filter((workout): workout is WorkoutCatalogWorkout => Boolean(workout));
+}
+
+function findWorkoutDetail(workoutSlug: string, workoutCatalog: WorkoutCatalogWorkout[]) {
+  return (
+    workoutCatalog.find((workout) => workout.slug === workoutSlug) ??
+    buildFallbackWorkoutCard(workoutSlug)
+  );
 }
 
 function buildFallbackWorkoutCard(slug: string): WorkoutCatalogWorkout | null {
@@ -2091,18 +2883,7 @@ function readSavedThreads(): SavedChatThread[] {
       return [];
     }
 
-    const parsed = JSON.parse(raw) as SavedChatThread[];
-
-    return Array.isArray(parsed)
-      ? parsed.filter(
-          (thread) =>
-            typeof thread?.id === "string" &&
-            typeof thread?.title === "string" &&
-            Array.isArray(thread?.messages) &&
-            typeof thread?.activeWorkoutId === "string" &&
-            typeof thread?.updatedAt === "number",
-        )
-      : [];
+    return sanitizeSavedThreads(JSON.parse(raw));
   } catch {
     return [];
   }
@@ -2160,6 +2941,67 @@ function writeSavedCartItems(items: ChatCartItem[]) {
   try {
     window.localStorage.setItem(CHAT_CART_STORAGE_KEY, JSON.stringify(items));
   } catch {}
+}
+
+function readWorkoutActivity(): WorkoutActivityEntry[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const raw = window.localStorage.getItem(WORKOUT_ACTIVITY_STORAGE_KEY);
+
+    if (!raw) {
+      return [];
+    }
+
+    return sanitizeWorkoutActivityEntries(JSON.parse(raw));
+  } catch {
+    return [];
+  }
+}
+
+function writeWorkoutActivity(items: WorkoutActivityEntry[]) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(WORKOUT_ACTIVITY_STORAGE_KEY, JSON.stringify(items));
+  } catch {}
+}
+
+function readWorkoutActivitySeenAt() {
+  if (typeof window === "undefined") {
+    return 0;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(WORKOUT_ACTIVITY_SEEN_AT_STORAGE_KEY);
+    const value = raw ? Number.parseInt(raw, 10) : 0;
+    return Number.isFinite(value) ? value : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function writeWorkoutActivitySeenAt(value: number) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(WORKOUT_ACTIVITY_SEEN_AT_STORAGE_KEY, `${value}`);
+  } catch {}
+}
+
+function formatActivityDate(timestamp: number) {
+  return new Intl.DateTimeFormat("en-AU", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(timestamp));
 }
 
 function normalizeFlavourName(value: string) {

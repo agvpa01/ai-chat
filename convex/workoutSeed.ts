@@ -157,6 +157,25 @@ export const seedExercises: WorkoutSeedExercise[] = [
       "Use case: photorealistic-natural\nAsset type: workout exercise card\nPrimary request: athletic person holding a forearm plank in a bright training space\nSubject: trainer in a perfect forearm plank with neutral neck and straight line posture\nStyle/medium: photorealistic fitness photography\nComposition/framing: vertical side view, full body, form-focused\nLighting/mood: soft daylight, focused and disciplined\nConstraints: no logos; no text; no watermark",
   },
   {
+    slug: "reverse-crunch",
+    name: "Reverse Crunch",
+    mode: "reps",
+    defaultTarget: 12,
+    unit: "reps",
+    defaultRestSeconds: 25,
+    focus: "Lower abs",
+    summary:
+      "Curl the hips toward the ribs with control and keep the movement small enough to stay in the abs.",
+    instructions: [
+      "Lie on the back with knees bent and shins parallel to the floor.",
+      "Brace the core, then gently roll the hips up off the mat.",
+      "Lower slowly and reset before the next rep.",
+    ],
+    youtubeUrl: "https://www.youtube.com/watch?v=hyv14e2QDq0",
+    imagePrompt:
+      "Use case: photorealistic-natural\nAsset type: workout exercise card\nPrimary request: athletic person performing a reverse crunch on a mat in a bright training studio\nSubject: trainer lifting the hips slightly off the floor with knees bent and core engaged\nStyle/medium: photorealistic fitness photography\nComposition/framing: vertical three-quarter view, full body, clear floor position\nLighting/mood: clean studio daylight, focused and premium\nConstraints: no logos; no text; no watermark",
+  },
+  {
     slug: "goblet-squat",
     name: "Goblet Squat",
     mode: "reps",
@@ -323,6 +342,19 @@ export const seedWorkouts: WorkoutSeed[] = [
       "Use case: photorealistic-natural\nAsset type: workout program hero card\nPrimary request: premium HIIT workout image inside a bright modern gym\nSubject: two athletic people mid-circuit with jump squats and mountain climbers energy\nStyle/medium: photorealistic fitness photography\nComposition/framing: wide landscape hero, dynamic but clean, room for overlay text\nLighting/mood: bright motivating gym light, energetic and polished\nConstraints: no logos; no text; no watermark",
     exerciseSlugs: ["jump-squat", "mountain-climber", "push-up", "plank-hold"],
     recommendedProductSlugs: ["pre-workout", "electrolytes", "whey-isolate"],
+  },
+  {
+    slug: "core-control",
+    name: "Core Control",
+    goal: "Abs strength and trunk stability",
+    level: "Beginner to intermediate",
+    durationMinutes: 20,
+    summary:
+      "A focused core session that mixes bracing, lower-ab control, and steady trunk work for home or gym days.",
+    imagePrompt:
+      "Use case: photorealistic-natural\nAsset type: workout program hero card\nPrimary request: premium core workout image in a bright modern studio\nSubject: athletic person moving through a controlled abs circuit on a mat with focused energy\nStyle/medium: photorealistic fitness photography\nComposition/framing: wide landscape hero, grounded composition, premium editorial feel\nLighting/mood: clean daylight, confident and athletic\nConstraints: no logos; no text; no watermark",
+    exerciseSlugs: ["dead-bug", "plank-hold", "mountain-climber", "reverse-crunch"],
+    recommendedProductSlugs: ["electrolytes", "whey-isolate"],
   },
   {
     slug: "strength-builder",

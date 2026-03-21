@@ -94,8 +94,8 @@ export function CustomerAuthCard({
   }
 
   return (
-    <section className="mt-5 overflow-hidden rounded-[1.75rem] border border-[#1D1D1D]/10 bg-[linear-gradient(145deg,rgba(255,255,255,0.98),rgba(231,240,232,0.92))] shadow-[0_18px_50px_rgba(23,58,64,0.08)]">
-      <div className="border-b border-[#1D1D1D]/10 bg-[linear-gradient(135deg,rgba(79,184,178,0.18),rgba(59,117,57,0.12))] px-5 py-4">
+    <section className="mt-5 overflow-hidden rounded-[1.75rem] border border-[#173A40]/10 bg-[linear-gradient(145deg,#F8FAF5_0%,#EEF5EE_100%)] shadow-[0_18px_50px_rgba(23,58,64,0.08)]">
+      <div className="border-b border-[#173A40]/10 bg-[linear-gradient(145deg,rgba(59,117,57,0.12),rgba(34,184,169,0.08))] px-5 py-4">
         <p className="m-0 text-xs font-semibold uppercase tracking-[0.18em] text-[#2F6A4A]">
           Customer Connection
         </p>
@@ -114,7 +114,7 @@ export function CustomerAuthCard({
       <div className="p-5">
         {session ? (
           <div className="space-y-5">
-            <div className="rounded-[1.35rem] border border-[#3B7539]/18 bg-white/85 p-4">
+            <div className="rounded-[1.35rem] border border-[#3B7539]/16 bg-white p-4 shadow-[0_10px_28px_rgba(23,58,64,0.04)]">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <p className="m-0 text-sm font-semibold text-[#173A40]">
@@ -125,7 +125,7 @@ export function CustomerAuthCard({
                     Connected until {new Date(session.expiresAt).toLocaleString()}
                   </p>
                 </div>
-                <span className="rounded-full bg-[#EAF3E8] px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[#20442E]">
+                <span className="rounded-full bg-[#EAF3E8] px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[#2F6A4A]">
                   Already connected
                 </span>
               </div>
@@ -135,14 +135,14 @@ export function CustomerAuthCard({
               <button
                 type="button"
                 disabled
-                className="rounded-full bg-[#173A40]/78 px-5 py-3 text-sm font-semibold text-white opacity-80"
+                className="rounded-full bg-[#3B7539] px-5 py-3 text-sm font-semibold text-white opacity-85"
               >
                 Already connected
               </button>
               <button
                 type="button"
                 onClick={onLogout}
-                className="rounded-full border border-[#173A40]/12 bg-[#F6F7F2] px-4 py-3 text-sm font-semibold text-[#173A40] transition hover:border-[#173A40]/24 hover:bg-white"
+                className="rounded-full border border-[#173A40]/12 bg-white px-4 py-3 text-sm font-semibold text-[#173A40] transition hover:border-[#173A40]/22 hover:bg-[#F8FAF5]"
               >
                 Disconnect
               </button>
@@ -150,7 +150,7 @@ export function CustomerAuthCard({
           </div>
         ) : (
           <div className="space-y-5">
-            <div className="rounded-[1.35rem] border border-[#173A40]/10 bg-white/88 p-4">
+            <div className="rounded-[1.35rem] border border-[#173A40]/10 bg-white p-4 shadow-[0_10px_28px_rgba(23,58,64,0.04)]">
               <p className="m-0 text-sm leading-7 text-[#173A40]/74">
                 Tap once to continue with Shopify. If the customer already has an account there,
                 they can sign in. If not, Shopify can guide them through account creation in the
@@ -163,7 +163,7 @@ export function CustomerAuthCard({
                 type="button"
                 disabled={isConnecting}
                 onClick={() => void connectAccount()}
-                className="rounded-full bg-[#173A40] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#214a51] disabled:cursor-wait disabled:opacity-70"
+                className="rounded-full bg-[#3B7539] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#336833] disabled:cursor-wait disabled:opacity-70"
               >
                 {isConnecting ? "Connecting..." : "Connect Shopify Account"}
               </button>
@@ -201,12 +201,14 @@ function StatusNotice({ state }: { state: ConnectState }) {
 
   const tone =
     state.status === "success"
-      ? "bg-[#EAF3E8] text-[#20442E]"
+      ? "border-[#3B7539]/18 bg-[#EAF3E8] text-[#2F6A4A]"
       : state.status === "error"
-        ? "bg-[#FFF2F0] text-[#8B3125]"
-        : "bg-[#EEF7FA] text-[#1E5965]";
+        ? "border-[#D7A399]/20 bg-[#FFF3F1] text-[#8B3125]"
+        : "border-[#3B7539]/14 bg-[#F2F8F1] text-[#2F6A4A]";
 
-  return <div className={`rounded-2xl px-4 py-3 text-sm leading-6 ${tone}`}>{state.message}</div>;
+  return (
+    <div className={`rounded-2xl border px-4 py-3 text-sm leading-6 ${tone}`}>{state.message}</div>
+  );
 }
 
 function generateRandomToken(length: number) {

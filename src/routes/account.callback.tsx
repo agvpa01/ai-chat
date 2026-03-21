@@ -92,21 +92,21 @@ function AccountCallback() {
 
   const tone =
     state.status === "success"
-      ? "bg-[#EAF3E8] text-[#20442E]"
+      ? "border-[#3B7539]/18 bg-[#EAF3E8] text-[#2F6A4A]"
       : state.status === "error"
-        ? "bg-[#FFF2F0] text-[#8B3125]"
-        : "bg-[#EEF7FA] text-[#1E5965]";
+        ? "border-[#D7A399]/20 bg-[#FFF3F1] text-[#8B3125]"
+        : "border-[#3B7539]/14 bg-[#F2F8F1] text-[#2F6A4A]";
 
   return (
     <main className="page-wrap flex min-h-[70vh] items-center px-4 py-12">
-      <section className="mx-auto w-full max-w-2xl rounded-[2rem] border border-[rgba(23,58,64,0.1)] bg-[linear-gradient(145deg,rgba(255,255,255,0.98),rgba(231,243,236,0.92))] p-8 shadow-[0_24px_80px_rgba(23,58,64,0.08)]">
+      <section className="mx-auto w-full max-w-2xl rounded-[2rem] border border-[#173A40]/10 bg-[linear-gradient(145deg,#F8FAF5_0%,#EEF5EE_100%)] p-8 shadow-[0_24px_80px_rgba(23,58,64,0.08)]">
         <p className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-[#2F6A4A]">
           Shopify Callback
         </p>
         <h1 className="m-0 font-['Fraunces'] text-3xl text-[#173A40]">
           Finalizing account connection
         </h1>
-        <div className={`mt-5 rounded-2xl px-4 py-4 text-sm leading-7 ${tone}`}>
+        <div className={`mt-5 rounded-2xl border px-4 py-4 text-sm leading-7 ${tone}`}>
           {state.message}
         </div>
       </section>

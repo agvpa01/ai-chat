@@ -41,19 +41,16 @@ function About() {
       </section>
 
       <section className="island-shell mt-8 rounded-[2rem] p-6">
-        <p className="island-kicker mb-2">Environment</p>
+        <p className="island-kicker mb-2">Local Environment</p>
         <h2 className="m-0 text-2xl font-semibold text-[var(--sea-ink)]">
-          Keys wired into the app
+          Values still needed on this machine
         </h2>
+        <p className="mt-3 mb-0 max-w-3xl text-sm leading-7 text-[var(--sea-ink-soft)]">
+          Shopify and OpenAI secrets now live in Convex environment variables. Local development
+          only needs the Convex connection values below.
+        </p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          {[
-            "OPENAI_API_KEY",
-            "OPENAI_MODEL",
-            "SHOPIFY_STORE_DOMAIN",
-            "SHOPIFY_STOREFRONT_ACCESS_TOKEN",
-            "SHOPIFY_ADMIN_ACCESS_TOKEN",
-            "VITE_CONVEX_URL",
-          ].map((item) => (
+          {["CONVEX_DEPLOYMENT", "VITE_CONVEX_URL", "VITE_CONVEX_SITE_URL"].map((item) => (
             <div
               key={item}
               className="rounded-[1.2rem] border border-[rgba(23,58,64,0.12)] bg-white/78 px-4 py-3 text-sm font-semibold text-[var(--sea-ink)]"

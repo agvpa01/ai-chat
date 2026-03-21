@@ -19,8 +19,8 @@ export function CustomerAuthExperience({
 
   return (
     <div className={isResponse ? "mt-5 space-y-6" : "space-y-8"}>
-      <section className="relative overflow-hidden rounded-[2.4rem] border border-[rgba(23,58,64,0.1)] bg-[linear-gradient(140deg,rgba(255,255,255,0.96),rgba(231,243,236,0.92))] p-6 shadow-[0_24px_80px_rgba(23,58,64,0.08)] sm:p-8">
-        <div className="absolute inset-x-0 top-0 h-36 bg-[radial-gradient(circle_at_top_left,rgba(79,184,178,0.24),transparent_58%),radial-gradient(circle_at_top_right,rgba(59,117,57,0.18),transparent_46%)]" />
+      <section className="relative overflow-hidden rounded-[2.4rem] border border-[#173A40]/10 bg-[linear-gradient(145deg,#F8FAF5_0%,#EEF5EE_52%,#F7FAF6_100%)] p-6 shadow-[0_24px_80px_rgba(23,58,64,0.08)] sm:p-8">
+        <div className="absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top_left,rgba(59,117,57,0.16),transparent_58%),radial-gradient(circle_at_top_right,rgba(34,184,169,0.12),transparent_48%)]" />
         <div className="relative z-10 max-w-3xl">
           <p className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-[#2F6A4A]">
             {isResponse ? "Account Connection" : "Account"}
@@ -36,19 +36,19 @@ export function CustomerAuthExperience({
             {isResponse ? (
               <Link
                 to="/account"
-                className="rounded-full border border-[#173A40]/12 bg-white/88 px-4 py-2 text-[#173A40] no-underline transition hover:border-[#173A40]/24 hover:bg-white"
+                className="rounded-full border border-[#3B7539]/14 bg-white px-4 py-2 text-[#2F6A4A] no-underline transition hover:border-[#3B7539]/28 hover:bg-[#F8FAF5]"
               >
                 Open standalone account page
               </Link>
             ) : (
               <Link
                 to="/"
-                className="rounded-full border border-[#173A40]/12 bg-white/88 px-4 py-2 text-[#173A40] no-underline transition hover:border-[#173A40]/24 hover:bg-white"
+                className="rounded-full border border-[#3B7539]/14 bg-white px-4 py-2 text-[#2F6A4A] no-underline transition hover:border-[#3B7539]/28 hover:bg-[#F8FAF5]"
               >
                 Back to assistant
               </Link>
             )}
-            <span className="text-[#173A40]/58">
+            <span className="text-[#173A40]/60">
               {session ? `Connected as ${session.customer.email}` : "Not connected yet"}
             </span>
           </div>
@@ -66,7 +66,7 @@ export function CustomerAuthExperience({
         </div>
 
         <aside className="space-y-4">
-          <div className="rounded-[1.8rem] border border-[rgba(23,58,64,0.1)] bg-white/84 p-5 shadow-[0_12px_36px_rgba(23,58,64,0.06)]">
+          <div className="rounded-[1.8rem] border border-[#173A40]/10 bg-white p-5 shadow-[0_12px_36px_rgba(23,58,64,0.06)]">
             <p className="m-0 text-xs font-semibold uppercase tracking-[0.16em] text-[#2F6A4A]">
               What this connects
             </p>
@@ -79,7 +79,7 @@ export function CustomerAuthExperience({
             </p>
           </div>
 
-          <div className="rounded-[1.8rem] border border-[rgba(23,58,64,0.1)] bg-[linear-gradient(160deg,rgba(246,247,242,0.92),rgba(255,255,255,0.9))] p-5 shadow-[0_12px_36px_rgba(23,58,64,0.06)]">
+          <div className="rounded-[1.8rem] border border-[#173A40]/10 bg-[linear-gradient(160deg,#F4F8F3_0%,#FFFFFF_100%)] p-5 shadow-[0_12px_36px_rgba(23,58,64,0.06)]">
             <p className="m-0 text-xs font-semibold uppercase tracking-[0.16em] text-[#2F6A4A]">
               Next unlocks
             </p>

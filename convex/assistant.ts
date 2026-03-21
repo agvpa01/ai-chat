@@ -9,6 +9,13 @@ const workoutTemplates = [
     durationMinutes: 24,
   },
   {
+    slug: "core-control",
+    name: "Core Control",
+    goal: "Abs strength and trunk stability",
+    level: "Beginner to intermediate",
+    durationMinutes: 20,
+  },
+  {
     slug: "strength-builder",
     name: "Strength Builder",
     goal: "Muscle gain and progression",
