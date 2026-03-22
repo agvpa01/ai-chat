@@ -93,6 +93,18 @@ export type RecommendedArticle = {
   blogTitle: string | null;
 };
 
+export type RecommendedPage = {
+  title: string;
+  summary: string;
+  contentHtml: string;
+  url: string;
+  imageUrl: string | null;
+  imageAlt: string | null;
+  updatedAt: string | null;
+  pageType: string | null;
+  linkedPages?: RecommendedPage[];
+};
+
 export const storeAnswers: StoreAnswer[] = [
   {
     topic: "shipping",
@@ -357,6 +369,7 @@ export type DemoMessage =
       products?: RecommendedProduct[];
       productSectionTitle?: string;
       articles?: RecommendedArticle[];
+      pages?: RecommendedPage[];
       orderPreview?: OrderPreview;
       orderPreviews?: OrderPreview[];
       requiresAccountConnection?: boolean;
@@ -444,6 +457,17 @@ function isBlogRequest(input: string) {
   );
 }
 
+function isPageRequest(input: string) {
+  return (
+    ["faq", "faqs", "about", "support", "contact", "policy", "policies", "page", "pages"].some(
+      (term) => input.includes(term),
+    ) ||
+    input.includes("home page") ||
+    input.includes("homepage") ||
+    input.includes("event")
+  );
+}
+
 export function buildAssistantMessages(
   input: string,
   currentWorkoutId: string,
@@ -499,6 +523,19 @@ export function buildAssistantMessages(
           role: "assistant",
           kind: "text",
           text: "I can surface VPA blog recommendations and article summaries here. Once the live content feed is connected, blog requests should return article cards instead of product picks.",
+        },
+      ],
+    };
+  }
+
+  if (isPageRequest(lowered)) {
+    return {
+      messages: [
+        {
+          id: `page-${Date.now()}`,
+          role: "assistant",
+          kind: "text",
+          text: "I can surface VPA page recommendations here. Once the live Shopify page feed responds, requests for FAQs, About, support, events, and homepage content should return page cards instead of product picks.",
         },
       ],
     };

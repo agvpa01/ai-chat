@@ -15,6 +15,7 @@ type CustomerAccountDiscovery = {
 type TokenResponse = {
   access_token: string;
   expires_in: number;
+  refresh_token?: string;
   id_token?: string;
 };
 
@@ -116,11 +117,81 @@ export const completeConnection = action({
       ok: true as const,
       session: {
         accessToken: tokenPayload.access_token,
+        refreshToken: tokenPayload.refresh_token,
         expiresAt: new Date(Date.now() + tokenPayload.expires_in * 1000).toISOString(),
         idToken: tokenPayload.id_token,
         customer: customerProfile,
       },
       message: `Connected ${customerProfile.email} to this app.`,
+    };
+  },
+});
+
+export const refreshConnection = action({
+  args: {
+    refreshToken: v.string(),
+    requestOrigin: v.string(),
+  },
+  handler: async (_ctx, args) => {
+    const storeDomain = process.env.SHOPIFY_STORE_DOMAIN;
+    const clientId = process.env.SHOPIFY_CUSTOMER_ACCOUNT_CLIENT_ID;
+
+    if (!storeDomain || !clientId) {
+      throw new Error(
+        "Shopify customer account connection is not configured. Add SHOPIFY_CUSTOMER_ACCOUNT_CLIENT_ID first.",
+      );
+    }
+
+    const authConfig = await getOpenIdConfiguration(storeDomain);
+    const tokenResponse = await fetch(authConfig.token_endpoint, {
+      method: "POST",
+      signal: AbortSignal.timeout(10000),
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Origin: args.requestOrigin,
+        "User-Agent": "VPA Coach Customer Refresh",
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: clientId,
+        refresh_token: args.refreshToken,
+      }),
+    });
+
+    if (!tokenResponse.ok) {
+      throw new Error(`Shopify refresh token exchange failed with ${tokenResponse.status}`);
+    }
+
+    const tokenPayload = (await tokenResponse.json()) as Partial<TokenResponse> & {
+      error?: string;
+      error_description?: string;
+    };
+
+    if (tokenPayload.error || !tokenPayload.access_token || !tokenPayload.expires_in) {
+      throw new Error(
+        tokenPayload.error_description ||
+          tokenPayload.error ||
+          "Shopify customer refresh did not return an access token.",
+      );
+    }
+
+    const accountConfig = await getCustomerAccountDiscovery(storeDomain);
+    const customerProfile = await fetchConnectedCustomer(
+      accountConfig.graphql_api,
+      tokenPayload.access_token,
+      args.requestOrigin,
+    );
+
+    return {
+      ok: true as const,
+      session: {
+        accessToken: tokenPayload.access_token,
+        refreshToken: tokenPayload.refresh_token ?? args.refreshToken,
+        expiresAt: new Date(Date.now() + tokenPayload.expires_in * 1000).toISOString(),
+        idToken: tokenPayload.id_token,
+        customer: customerProfile,
+      },
+      message: `Refreshed ${customerProfile.email} on this device.`,
     };
   },
 });

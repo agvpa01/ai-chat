@@ -23,6 +23,7 @@ import {
 import {
   clearStoredCustomerSession,
   getCustomerAuthRequestMode,
+  refreshCustomerSessionIfNeeded,
   readStoredCustomerSession,
   type CustomerAuthSession,
 } from "../lib/customer-auth";
@@ -33,6 +34,7 @@ import {
   sampleOrder,
   workouts,
   type RecommendedArticle,
+  type RecommendedPage,
   type DemoMessage,
   type RecommendedProduct,
 } from "../lib/vpa-assistant";
@@ -140,6 +142,33 @@ function App() {
   const lastActivitySeenAtRef = useRef(0);
   const currentThreadIdRef = useRef(currentThreadId);
 
+  async function ensureFreshCustomerSession(session: CustomerAuthSession | null) {
+    const refreshedSession = await refreshCustomerSessionIfNeeded(session);
+
+    if (!refreshedSession) {
+      if (session) {
+        startTransition(() => {
+          setCustomerSession(null);
+        });
+      }
+
+      return null;
+    }
+
+    if (
+      !session ||
+      refreshedSession.accessToken !== session.accessToken ||
+      refreshedSession.expiresAt !== session.expiresAt ||
+      refreshedSession.refreshToken !== session.refreshToken
+    ) {
+      startTransition(() => {
+        setCustomerSession(refreshedSession);
+      });
+    }
+
+    return refreshedSession;
+  }
+
   useEffect(() => {
     savedThreadsRef.current = savedThreads;
   }, [savedThreads]);
@@ -157,37 +186,52 @@ function App() {
   }, [currentThreadId]);
 
   useEffect(() => {
-    const storedThreads = readSavedThreads();
-    const storedCartItems = readSavedCartItems();
-    const storedWorkoutActivity = readWorkoutActivity();
-    const storedCustomerSession = readStoredCustomerSession();
-    const storedActivitySeenAt = readWorkoutActivitySeenAt();
+    let cancelled = false;
 
-    if (storedThreads.length) {
-      const latestThread = storedThreads[0];
-      setSavedThreads(storedThreads);
-      setCurrentThreadId(latestThread.id);
-      setMessages(latestThread.messages);
-      setActiveWorkoutId(latestThread.activeWorkoutId);
+    async function hydrateLocalState() {
+      const storedThreads = readSavedThreads();
+      const storedCartItems = readSavedCartItems();
+      const storedWorkoutActivity = readWorkoutActivity();
+      const storedCustomerSession = readStoredCustomerSession();
+      const storedActivitySeenAt = readWorkoutActivitySeenAt();
+      const refreshedCustomerSession = await refreshCustomerSessionIfNeeded(storedCustomerSession);
+
+      if (cancelled) {
+        return;
+      }
+
+      if (storedThreads.length) {
+        const latestThread = storedThreads[0];
+        setSavedThreads(storedThreads);
+        setCurrentThreadId(latestThread.id);
+        setMessages(latestThread.messages);
+        setActiveWorkoutId(latestThread.activeWorkoutId);
+      }
+
+      if (storedCartItems.length) {
+        setCartItems(storedCartItems);
+      }
+
+      if (storedWorkoutActivity.length) {
+        setWorkoutActivity(storedWorkoutActivity);
+      }
+
+      if (refreshedCustomerSession) {
+        setCustomerSession(refreshedCustomerSession);
+      }
+
+      if (storedActivitySeenAt > 0) {
+        setLastActivitySeenAt(storedActivitySeenAt);
+      }
+
+      setHasLoadedHistory(true);
     }
 
-    if (storedCartItems.length) {
-      setCartItems(storedCartItems);
-    }
+    void hydrateLocalState();
 
-    if (storedWorkoutActivity.length) {
-      setWorkoutActivity(storedWorkoutActivity);
-    }
-
-    if (storedCustomerSession) {
-      setCustomerSession(storedCustomerSession);
-    }
-
-    if (storedActivitySeenAt > 0) {
-      setLastActivitySeenAt(storedActivitySeenAt);
-    }
-
-    setHasLoadedHistory(true);
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -204,14 +248,18 @@ function App() {
       return;
     }
 
-    const connectedAccessToken = connectedSession.accessToken;
-
     setHasHydratedConnectedState(false);
 
     async function hydrateConnectedState() {
       try {
+        const usableSession = await ensureFreshCustomerSession(connectedSession);
+
+        if (!usableSession || cancelled) {
+          return;
+        }
+
         const remoteState = await convexHttpClient.action(api.customerState.loadConnectedState, {
-          accessToken: connectedAccessToken,
+          accessToken: usableSession.accessToken,
         });
 
         if (cancelled) {
@@ -358,6 +406,24 @@ function App() {
       return;
     }
 
+    const usableCustomerSession = await ensureFreshCustomerSession(customerSession);
+
+    if (!usableCustomerSession && looksLikeOrderSupportRequest(trimmed)) {
+      const orderAuthMessage: DemoMessage = {
+        id: `auth-order-${Date.now()}`,
+        role: "assistant",
+        kind: "auth",
+        text: "Connect your Shopify account to track orders or view order history in chat. For privacy, we only show orders for the signed-in Shopify customer.",
+        initialMode: "login",
+      };
+
+      startTransition(() => {
+        setMessages((current) => [...current, userMessage, orderAuthMessage]);
+        setDraft("");
+      });
+      return;
+    }
+
     startTransition(() => {
       setMessages((current) => [...current, userMessage]);
       if (reply.nextWorkoutId) {
@@ -372,8 +438,8 @@ function App() {
       const response = await convexHttpClient.action(api.chat.reply, {
         message: trimmed,
         workoutId: reply.nextWorkoutId ?? activeWorkoutId,
-        customerEmail: customerSession?.customer.email,
-        customerAccessToken: customerSession?.accessToken,
+        customerEmail: usableCustomerSession?.customer.email,
+        customerAccessToken: usableCustomerSession?.accessToken,
       });
       const assistantLiveMessage: DemoMessage = {
         id: `assistant-live-${Date.now()}`,
@@ -383,6 +449,7 @@ function App() {
         products: response.recommendedProducts,
         productSectionTitle: response.recommendedProductsCollectionTitle ?? undefined,
         articles: response.recommendedArticles,
+        pages: response.recommendedPages,
         orderPreview: response.orderPreview ?? undefined,
         orderPreviews: response.orderPreviews ?? undefined,
         requiresAccountConnection: response.requiresAccountConnection ?? undefined,
@@ -503,22 +570,25 @@ function App() {
       return;
     }
 
-    const connectedAccessToken = connectedSession.accessToken;
-    const connectedSessionExpiresAt = connectedSession.expiresAt;
-
     if (skipNextConnectedStateSaveRef.current) {
       skipNextConnectedStateSaveRef.current = false;
       return;
     }
 
-    void convexHttpClient
-      .action(api.customerState.saveConnectedState, {
-        accessToken: connectedAccessToken,
-        sessionExpiresAt: connectedSessionExpiresAt,
-        currentThreadId,
-        threads: savedThreads,
-        workoutActivity,
-        lastActivitySeenAt,
+    void ensureFreshCustomerSession(connectedSession)
+      .then((usableSession) => {
+        if (!usableSession) {
+          return;
+        }
+
+        return convexHttpClient.action(api.customerState.saveConnectedState, {
+          accessToken: usableSession.accessToken,
+          sessionExpiresAt: usableSession.expiresAt,
+          currentThreadId,
+          threads: savedThreads,
+          workoutActivity,
+          lastActivitySeenAt,
+        });
       })
       .catch(() => {});
   }, [
@@ -530,6 +600,20 @@ function App() {
     savedThreads,
     workoutActivity,
   ]);
+
+  useEffect(() => {
+    const session = customerSession;
+
+    if (!session?.refreshToken) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void ensureFreshCustomerSession(session);
+    }, 60_000);
+
+    return () => window.clearInterval(intervalId);
+  }, [customerSession]);
 
   useEffect(() => {
     if (!isCartOpen) {
@@ -737,6 +821,23 @@ function App() {
           kind: "text",
           text: `Here’s another VPA article that covers this topic.`,
           articles: orderedArticles,
+        },
+      ]);
+    });
+  }
+
+  function openPageDetail(page: RecommendedPage, relatedPages: RecommendedPage[] = []) {
+    const orderedPages = [page, ...relatedPages.filter((entry) => entry.url !== page.url)];
+
+    startTransition(() => {
+      setMessages((current) => [
+        ...current,
+        {
+          id: `assistant-page-${Date.now()}-${page.url}`,
+          role: "assistant",
+          kind: "text",
+          text: `Here’s another VPA page that matches your question.`,
+          pages: orderedPages,
         },
       ]);
     });
@@ -1180,6 +1281,38 @@ function App() {
                             ) : null}
                           </div>
                         ) : null}
+
+                        {"pages" in message && message.pages?.length
+                          ? (() => {
+                              const primaryPage = message.pages[0];
+
+                              if (!primaryPage) {
+                                return null;
+                              }
+
+                              return (
+                                <div className="mt-5 space-y-6">
+                                  <PageCard
+                                    page={primaryPage}
+                                    onSelectLinkedPage={(page, linkedPages) =>
+                                      openPageDetail(page, [
+                                        primaryPage,
+                                        ...linkedPages.filter((entry) => entry.url !== page.url),
+                                      ])
+                                    }
+                                  />
+                                  {primaryPage.linkedPages?.length ? null : message.pages.length >
+                                    1 ? (
+                                    <PageGrid
+                                      pages={message.pages.slice(1)}
+                                      currentPage={primaryPage}
+                                      onSelectPage={openPageDetail}
+                                    />
+                                  ) : null}
+                                </div>
+                              );
+                            })()
+                          : null}
 
                         {"workoutSlugs" in message && message.workoutSlugs?.length ? (
                           <WorkoutCardGrid
@@ -1793,6 +1926,107 @@ function ArticleCard({ article }: { article: RecommendedArticle }) {
   );
 }
 
+function PageCard({
+  page,
+  onSelectLinkedPage,
+}: {
+  page: RecommendedPage;
+  onSelectLinkedPage?: (page: RecommendedPage, linkedPages: RecommendedPage[]) => void;
+}) {
+  const isFormPage = isFormLikePage(page);
+  const summaryText = normalizeRenderedRichText(page.summary);
+  const bodyText = normalizeRenderedRichText(sanitizeArticleHtml(page.contentHtml));
+  const bodyExtendsSummary =
+    summaryText.length > 0 &&
+    bodyText.startsWith(summaryText) &&
+    bodyText.length > summaryText.length * 1.2;
+  const shouldShowBody =
+    !isFormPage && bodyText.length > 0 && (bodyExtendsSummary || bodyText !== summaryText);
+  const shouldShowSummary =
+    summaryText.length > 0 &&
+    (!shouldShowBody || (!bodyText.startsWith(summaryText) && bodyText !== summaryText));
+
+  return (
+    <article className="overflow-hidden rounded-[1.5rem] border border-[#1D1D1D]/10 bg-white">
+      {page.imageUrl ? (
+        <div className="border-b border-[#1D1D1D]/10 bg-[#F7FBF8]">
+          <img
+            src={page.imageUrl}
+            alt={page.imageAlt ?? page.title}
+            className="max-h-[34rem] w-full object-cover"
+            loading="lazy"
+          />
+        </div>
+      ) : null}
+
+      <div className="space-y-6 p-5 lg:p-7">
+        <div className="flex items-center justify-between gap-3 text-xs font-semibold uppercase tracking-[0.08em] text-[#3B7539]">
+          <div className="flex items-center gap-2">
+            <span>Home</span>
+            <span>/</span>
+            <span>{page.pageType ?? "Page"}</span>
+          </div>
+          <a
+            href={page.url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-[#3B7539] no-underline"
+          >
+            Open page
+          </a>
+        </div>
+
+        <div className="space-y-3">
+          <h2 className="m-0 text-3xl font-semibold uppercase tracking-[0.04em] text-black sm:text-4xl">
+            {page.title}
+          </h2>
+          <div className="text-base font-medium text-[#717171]">{formatPageMeta(page)}</div>
+        </div>
+
+        {shouldShowSummary ? (
+          <div className="rounded-[1rem] border border-[#1D1D1D]/10 bg-[#F7FBF8] p-4 text-lg leading-9 text-black">
+            <p className="m-0">{page.summary}</p>
+          </div>
+        ) : null}
+
+        {shouldShowBody ? (
+          <div
+            className="article-content text-lg leading-9 text-black"
+            dangerouslySetInnerHTML={{ __html: sanitizeArticleHtml(page.contentHtml) }}
+          />
+        ) : null}
+
+        {isFormPage ? (
+          <div className="rounded-[1rem] border border-[#3B7539]/18 bg-[linear-gradient(135deg,#F7FBF8_0%,#EEF7F0_100%)] p-5">
+            <div className="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-[#2F6A4A]">
+              Sign-up Form
+            </div>
+            <p className="mb-4 mt-2 text-base leading-7 text-[#173A40]">
+              This page includes a live form, so the best experience is to open it on the VPA
+              website and complete it there.
+            </p>
+            <a
+              href={page.url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex rounded-[0.95rem] bg-[#173A40] px-5 py-3 text-sm font-extrabold uppercase tracking-[0.08em] text-white no-underline"
+            >
+              Open Form On Site
+            </a>
+          </div>
+        ) : null}
+
+        {page.pageType === "Events" && page.linkedPages?.length ? (
+          <EventRecapGrid
+            pages={page.linkedPages}
+            onSelectPage={(linkedPage) => onSelectLinkedPage?.(linkedPage, page.linkedPages ?? [])}
+          />
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
 function OrderStatusCard({
   order,
   customerSession,
@@ -2094,6 +2328,113 @@ function ArticleGrid({
                 {article.title}
               </h3>
               <p className="m-0 text-base leading-7 text-black">{article.summary}</p>
+            </div>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function PageGrid({
+  pages,
+  currentPage,
+  onSelectPage,
+}: {
+  pages: RecommendedPage[];
+  currentPage?: RecommendedPage;
+  onSelectPage: (page: RecommendedPage, relatedPages: RecommendedPage[]) => void;
+}) {
+  return (
+    <section className="space-y-4">
+      <div className="text-[0.8rem] font-semibold uppercase tracking-[0.22em] text-black">
+        Related Pages
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        {pages.map((page) => (
+          <button
+            type="button"
+            key={page.url}
+            onClick={() =>
+              onSelectPage(page, [
+                ...(currentPage ? [currentPage] : []),
+                ...pages.filter((entry) => entry.url !== page.url),
+              ])
+            }
+            className="block rounded-[1.2rem] border border-[#1D1D1D]/10 bg-white p-4 text-left text-black"
+          >
+            <div className="space-y-3">
+              {page.imageUrl ? (
+                <div className="overflow-hidden rounded-[1rem] border border-[#1D1D1D]/10 bg-[#F7FBF8]">
+                  <img
+                    src={page.imageUrl}
+                    alt={page.imageAlt ?? page.title}
+                    className="h-44 w-full object-cover"
+                    loading="lazy"
+                  />
+                </div>
+              ) : null}
+              <div className="text-xs font-semibold uppercase tracking-[0.08em] text-[#3B7539]">
+                {page.pageType ?? "Page"}
+              </div>
+              <h3 className="m-0 text-xl font-semibold uppercase tracking-[0.04em] text-black">
+                {page.title}
+              </h3>
+              <p className="m-0 text-base leading-7 text-black">{page.summary}</p>
+            </div>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function EventRecapGrid({
+  pages,
+  onSelectPage,
+}: {
+  pages: RecommendedPage[];
+  onSelectPage: (page: RecommendedPage) => void;
+}) {
+  return (
+    <section className="space-y-4">
+      <div className="text-[0.8rem] font-semibold uppercase tracking-[0.22em] text-black">
+        Event Recaps
+      </div>
+      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+        {pages.map((page) => (
+          <button
+            type="button"
+            key={page.url}
+            onClick={() => onSelectPage(page)}
+            className="group overflow-hidden rounded-[1.4rem] border border-[#1D1D1D]/10 bg-[#222222] text-left text-white"
+          >
+            <div className="relative">
+              {page.imageUrl ? (
+                <img
+                  src={page.imageUrl}
+                  alt={page.imageAlt ?? page.title}
+                  className="h-72 w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                  loading="lazy"
+                />
+              ) : (
+                <div className="h-72 w-full bg-[linear-gradient(135deg,#315A30_0%,#193420_100%)]" />
+              )}
+              <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.08)_0%,rgba(0,0,0,0.82)_100%)]" />
+              <div className="absolute inset-x-0 bottom-0 space-y-3 p-5">
+                <div className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-white/72">
+                  Event Recap
+                </div>
+                <h3 className="m-0 text-[1.85rem] font-semibold uppercase leading-[1.02] tracking-[-0.04em] text-white">
+                  {page.title}
+                </h3>
+                <p className="m-0 line-clamp-4 text-base leading-7 text-white/86">{page.summary}</p>
+                <div className="pt-1">
+                  <span className="inline-flex rounded-[0.85rem] border border-white/70 px-4 py-2 text-sm font-semibold uppercase tracking-[0.08em] text-white">
+                    View Event Recap
+                  </span>
+                </div>
+              </div>
             </div>
           </button>
         ))}
@@ -3022,6 +3363,35 @@ function sanitizeArticleHtml(html: string) {
     .replace(/<form[\s\S]*?<\/form>/gi, "");
 }
 
+function normalizeRenderedRichText(value: string) {
+  return value
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isFormLikePage(page: RecommendedPage) {
+  const haystack = `${page.title} ${page.summary} ${page.url} ${page.contentHtml}`.toLowerCase();
+
+  return (
+    haystack.includes("signup form") ||
+    haystack.includes("sign up form") ||
+    haystack.includes("/pages/vpa-signup-form") ||
+    (haystack.includes("<form") &&
+      haystack.includes("submit") &&
+      (haystack.includes("email") || haystack.includes("first name")))
+  );
+}
+
 function formatArticleMeta(article: RecommendedArticle) {
   const parts: string[] = [];
 
@@ -3037,6 +3407,26 @@ function formatArticleMeta(article: RecommendedArticle) {
 
   if (article.readTimeMinutes) {
     parts.push(`${article.readTimeMinutes} min read`);
+  }
+
+  return parts.join(" • ");
+}
+
+function formatPageMeta(page: RecommendedPage) {
+  const parts: string[] = [];
+
+  if (page.pageType) {
+    parts.push(page.pageType);
+  }
+
+  if (page.updatedAt) {
+    parts.push(
+      `Updated ${new Intl.DateTimeFormat("en-AU", {
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      }).format(new Date(page.updatedAt))}`,
+    );
   }
 
   return parts.join(" • ");

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { CustomerAuthExperience } from "../components/CustomerAuthExperience";
 import {
   clearStoredCustomerSession,
+  refreshCustomerSessionIfNeeded,
   readStoredCustomerSession,
   type CustomerAuthSession,
 } from "../lib/customer-auth";
@@ -16,8 +17,52 @@ function Account() {
   const [customerSession, setCustomerSession] = useState<CustomerAuthSession | null>(null);
 
   useEffect(() => {
-    setCustomerSession(readStoredCustomerSession());
+    let cancelled = false;
+
+    async function loadSession() {
+      const storedSession = readStoredCustomerSession();
+      const refreshedSession = await refreshCustomerSessionIfNeeded(storedSession);
+
+      if (cancelled) {
+        return;
+      }
+
+      setCustomerSession(refreshedSession);
+    }
+
+    void loadSession();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  useEffect(() => {
+    const session = customerSession;
+
+    if (!session?.refreshToken) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshCustomerSessionIfNeeded(session).then((refreshedSession) => {
+        if (!refreshedSession) {
+          setCustomerSession(null);
+          return;
+        }
+
+        if (
+          refreshedSession.accessToken !== session.accessToken ||
+          refreshedSession.expiresAt !== session.expiresAt ||
+          refreshedSession.refreshToken !== session.refreshToken
+        ) {
+          setCustomerSession(refreshedSession);
+        }
+      });
+    }, 60_000);
+
+    return () => window.clearInterval(intervalId);
+  }, [customerSession]);
 
   function handleLogout() {
     setCustomerSession(null);

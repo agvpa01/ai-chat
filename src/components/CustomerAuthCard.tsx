@@ -122,7 +122,9 @@ export function CustomerAuthCard({
                   </p>
                   <p className="mt-1 mb-0 text-sm text-[#173A40]/70">{session.customer.email}</p>
                   <p className="mt-2 mb-0 text-xs uppercase tracking-[0.14em] text-[#2F6A4A]/80">
-                    Connected until {new Date(session.expiresAt).toLocaleString()}
+                    {session.refreshToken
+                      ? "Auto-refresh enabled on this device"
+                      : `Connected until ${new Date(session.expiresAt).toLocaleString()}`}
                   </p>
                 </div>
                 <span className="rounded-full bg-[#EAF3E8] px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[#2F6A4A]">

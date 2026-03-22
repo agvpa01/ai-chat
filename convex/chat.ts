@@ -55,6 +55,14 @@ type AdminArticleCard = {
   onlineStoreUrl: string | null;
 };
 
+type AdminPageCard = {
+  title: string;
+  handle: string;
+  body: string;
+  bodySummary: string;
+  updatedAt: string | null;
+};
+
 type AdminCollectionCard = {
   title: string;
   handle: string;
@@ -103,6 +111,18 @@ type RecommendedArticle = {
   publishedAt: string | null;
   readTimeMinutes: number | null;
   blogTitle: string | null;
+};
+
+type RecommendedPage = {
+  title: string;
+  summary: string;
+  contentHtml: string;
+  url: string;
+  imageUrl: string | null;
+  imageAlt: string | null;
+  updatedAt: string | null;
+  pageType: string | null;
+  linkedPages?: RecommendedPage[];
 };
 
 type OrderTrackingPreview = {
@@ -156,6 +176,13 @@ type PublicSitemapArticle = {
   imageUrl: string | null;
   publishedAt: string | null;
   blogTitle: string | null;
+};
+
+type PublicSitemapPage = {
+  title: string;
+  url: string;
+  updatedAt: string | null;
+  pageType: string | null;
 };
 
 type ConnectedCustomer = {
@@ -294,6 +321,216 @@ function normalizeArticle(article: AdminArticleCard): RecommendedArticle | null 
   };
 }
 
+function inferPageType(title: string, handle: string) {
+  const haystack = `${title} ${handle}`.toLowerCase();
+
+  if (haystack.includes("faq") || haystack.includes("frequently asked questions")) {
+    return "FAQs";
+  }
+
+  if (haystack.includes("event")) {
+    return "Events";
+  }
+
+  if (haystack.includes("about")) {
+    return "About";
+  }
+
+  if (
+    haystack.includes("shipping") ||
+    haystack.includes("returns") ||
+    haystack.includes("refund") ||
+    haystack.includes("support") ||
+    haystack.includes("contact") ||
+    haystack.includes("policy") ||
+    haystack.includes("privacy") ||
+    haystack.includes("terms")
+  ) {
+    return "Support";
+  }
+
+  if (haystack.includes("home")) {
+    return "Storefront";
+  }
+
+  return "Page";
+}
+
+export function scorePageIntentMatch(message: string, value: string) {
+  const loweredMessage = message.toLowerCase();
+  const loweredValue = value.toLowerCase();
+  let score = 0;
+
+  if (
+    loweredMessage.includes("signup") ||
+    loweredMessage.includes("sign up") ||
+    loweredMessage.includes("form")
+  ) {
+    if (
+      loweredValue.includes("signup form") ||
+      loweredValue.includes("sign up form") ||
+      loweredValue.includes("/pages/vpa-signup-form")
+    ) {
+      score += 320;
+    }
+  }
+
+  if (loweredMessage.includes("faq")) {
+    if (
+      loweredValue.includes("frequently-asked-questions") ||
+      loweredValue.includes("frequently asked questions")
+    ) {
+      score += 120;
+    }
+
+    if (loweredValue.includes("faq")) {
+      score += 40;
+    }
+  }
+
+  if (loweredMessage.includes("about")) {
+    if (loweredValue.includes("about-us") || loweredValue.includes("about us")) {
+      score += 120;
+    }
+  }
+
+  if (loweredMessage.includes("contact")) {
+    if (loweredValue.includes("contact-us") || loweredValue.includes("contact us")) {
+      score += 120;
+    }
+  }
+
+  if (loweredMessage.includes("shipping") || loweredMessage.includes("delivery")) {
+    if (
+      loweredValue.includes("/pages/delivery") ||
+      loweredValue.includes("delivery") ||
+      loweredValue.includes("shipping")
+    ) {
+      score += 120;
+    }
+  }
+
+  if (loweredMessage.includes("return") || loweredMessage.includes("refund")) {
+    if (
+      loweredValue.includes("returns-and-refunds") ||
+      loweredValue.includes("returns") ||
+      loweredValue.includes("refund")
+    ) {
+      score += 120;
+    }
+  }
+
+  if (loweredMessage.includes("support")) {
+    if (loweredValue.includes("support")) {
+      score += 120;
+    }
+  }
+
+  if (loweredMessage.includes("event")) {
+    if (loweredValue.includes("/pages/vpa-events") || loweredValue.includes("vpa events")) {
+      score += 200;
+    }
+
+    if (loweredValue.includes("event")) {
+      score += 120;
+    }
+
+    if (
+      loweredValue.includes("upcoming events") ||
+      loweredValue.includes("past events") ||
+      loweredValue.includes("community events")
+    ) {
+      score += 80;
+    }
+  }
+
+  return score;
+}
+
+function inferExplicitYears(...values: Array<string | null | undefined>) {
+  const years = values.flatMap((value) =>
+    Array.from(value?.matchAll(/\b20\d{2}\b/g) ?? []).flatMap((match) => {
+      const parsed = Number.parseInt(match[0], 10);
+      return Number.isFinite(parsed) ? [parsed] : [];
+    }),
+  );
+
+  return Array.from(new Set(years));
+}
+
+export function isStaleEventPage(
+  page: {
+    pageType: string | null;
+    title: string;
+    summary: string;
+    url: string;
+    updatedAt: string | null;
+    contentHtml?: string;
+  },
+  currentYear = new Date().getFullYear(),
+) {
+  if (page.pageType !== "Events") {
+    return false;
+  }
+
+  const explicitYears = inferExplicitYears(page.title, page.summary, page.url, page.contentHtml);
+
+  if (!explicitYears.length) {
+    return false;
+  }
+
+  return Math.max(...explicitYears) < currentYear - 2;
+}
+
+export function isFormLikePage(page: {
+  title: string;
+  summary: string;
+  url: string;
+  contentHtml?: string;
+}) {
+  const haystack =
+    `${page.title} ${page.summary} ${page.url} ${page.contentHtml ?? ""}`.toLowerCase();
+
+  return (
+    haystack.includes("signup form") ||
+    haystack.includes("sign up form") ||
+    haystack.includes("/pages/vpa-signup-form") ||
+    (haystack.includes("<form") &&
+      haystack.includes("submit") &&
+      (haystack.includes("email") || haystack.includes("first name")))
+  );
+}
+
+function isEventsHubPage(page: { title: string; url: string; pageType: string | null }) {
+  return (
+    page.pageType === "Events" &&
+    (page.url.includes("/pages/vpa-events") || page.title.toLowerCase().includes("vpa events"))
+  );
+}
+
+function normalizePage(page: AdminPageCard): RecommendedPage | null {
+  const extractedContentHtml = extractStorefrontPageContentHtml(page.body);
+  const normalizedContentHtml = extractedContentHtml || page.body;
+  const plainText = stripHtml(normalizedContentHtml);
+  const summary = (page.bodySummary?.trim() || plainText).slice(0, 280).trim();
+  const pageImage = extractPageImage(page.body);
+
+  if (!page.title.trim() || !plainText) {
+    return null;
+  }
+
+  return {
+    title: page.title,
+    summary,
+    contentHtml: normalizedContentHtml,
+    url: `https://www.vpa.com.au/pages/${page.handle}`,
+    imageUrl: pageImage.imageUrl,
+    imageAlt: pageImage.imageAlt ?? page.title,
+    updatedAt: page.updatedAt,
+    pageType: inferPageType(page.title, page.handle),
+  };
+}
+
 function convertPlainTextToHtml(text: string) {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (!normalized) {
@@ -311,6 +548,196 @@ function convertPlainTextToHtml(text: string) {
   }
 
   return chunks.join("");
+}
+
+function extractStorefrontPageContentHtml(html: string) {
+  const shogunStructuredContent = extractStructuredShogunContentHtml(html);
+
+  if (shogunStructuredContent) {
+    return shogunStructuredContent;
+  }
+
+  const accordionSection = html.split(/<div class="shogun-accordion-wrapper"[^>]*>/i)[1];
+
+  if (accordionSection) {
+    const accordionChunks = accordionSection.split(/<div class="shogun-accordion">/i).slice(1, 5);
+    const sections = accordionChunks.flatMap((chunk) => {
+      const title = stripHtml(
+        chunk.match(/<h4[^>]*class="shogun-accordion-title"[^>]*>([\s\S]*?)<\/h4>/i)?.[1] ?? "",
+      );
+      const bodyParagraphs = Array.from(
+        chunk.matchAll(/<div[^>]*class="panel-body"[^>]*>([\s\S]*?)<\/div>/gi),
+      )
+        .map((match) => stripHtml(match[1] ?? ""))
+        .filter(Boolean)
+        .slice(0, 3);
+
+      if (!title || !bodyParagraphs.length) {
+        return [];
+      }
+
+      return [
+        `<section><h3>${escapeHtml(title)}</h3>${bodyParagraphs
+          .map((paragraph) => `<p>${escapeHtml(paragraph)}</p>`)
+          .join("")}</section>`,
+      ];
+    });
+
+    if (sections.length) {
+      return sections.join("");
+    }
+  }
+
+  const richTextContent = html.match(
+    /<div[^>]*class=["'][^"']*(?:shg-rich-text|rte|shopify-policy__body)[^"']*["'][^>]*>([\s\S]*?)<\/div>\s*<\/div>/i,
+  )?.[1];
+
+  if (richTextContent) {
+    return sanitizeHtmlFragment(richTextContent);
+  }
+
+  return "";
+}
+
+function extractStructuredShogunContentHtml(html: string) {
+  const shogunRootIndex = html.search(/<div[^>]+class=["'][^"']*shogun-root[^"']*["']/i);
+
+  if (shogunRootIndex === -1) {
+    return "";
+  }
+
+  const shogunHtml = html.slice(shogunRootIndex);
+  const matches = Array.from(shogunHtml.matchAll(/<(h[1-4]|p)\b[^>]*>([\s\S]*?)<\/\1>/gi));
+  const blocks: string[] = [];
+  const seenTexts = new Set<string>();
+  let accumulatedLength = 0;
+
+  for (const match of matches) {
+    const tag = match[1]?.toLowerCase() ?? "p";
+    const text = stripHtml(match[2] ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (!text || text.length < 3) {
+      continue;
+    }
+
+    const normalizedText = text.toLowerCase();
+
+    if (seenTexts.has(normalizedText)) {
+      continue;
+    }
+
+    seenTexts.add(normalizedText);
+
+    const isHeading = tag.startsWith("h");
+    const renderedTag = isHeading ? (tag === "h1" ? "h2" : "h3") : "p";
+    blocks.push(`<${renderedTag}>${escapeHtml(text)}</${renderedTag}>`);
+    accumulatedLength += text.length;
+
+    if (blocks.length >= 8 || accumulatedLength >= 1600) {
+      break;
+    }
+  }
+
+  return blocks.join("");
+}
+
+export function extractEventRecapUrlsFromEventsHub(html: string) {
+  const pastEventsIndex = html.indexOf("PAST EVENTS");
+
+  if (pastEventsIndex === -1) {
+    return [];
+  }
+
+  const section = html.slice(pastEventsIndex, pastEventsIndex + 180000);
+  const urls = Array.from(
+    section.matchAll(/href=["'](https:\/\/www\.vpa\.com\.au\/pages\/[^"']+)["']/g),
+  )
+    .map((match) => match[1]?.trim() ?? "")
+    .filter((url) => url && !url.includes("/pages/vpa-events"));
+
+  return Array.from(new Set(urls)).slice(0, 8);
+}
+
+function sanitizeHtmlFragment(html: string) {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/\son\w+="[^"]*"/gi, "")
+    .replace(/\son\w+='[^']*'/gi, "")
+    .replace(/<img[^>]*>/gi, "")
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, "")
+    .replace(/<form[\s\S]*?<\/form>/gi, "");
+}
+
+function isRenderablePageImageUrl(url: string | null | undefined) {
+  if (!url) {
+    return false;
+  }
+
+  const normalized = normalizeImageUrl(url);
+
+  if (!normalized) {
+    return false;
+  }
+
+  const lowered = normalized.toLowerCase();
+
+  if (
+    lowered.endsWith(".js") ||
+    lowered.endsWith(".css") ||
+    lowered.includes("global-assets") ||
+    lowered.includes("vpa-white-transparent") ||
+    lowered.includes("vpa-logo-square")
+  ) {
+    return false;
+  }
+
+  return /\.(avif|gif|jpe?g|png|svg|webp)(\?|$)/i.test(lowered) || lowered.includes("/-/format/");
+}
+
+function extractPageImage(html: string) {
+  const shogunImageMatch = html.match(
+    /<div[^>]*class="[^"]*shogun-image-container[^"]*"[^>]*>[\s\S]*?<img[^>]+src=["']([^"']+)["'][^>]*alt=["']([^"']*)["']/i,
+  );
+  const shogunImageUrl = normalizeImageUrl(shogunImageMatch?.[1] ?? null);
+
+  if (isRenderablePageImageUrl(shogunImageUrl)) {
+    return {
+      imageUrl: shogunImageUrl,
+      imageAlt: shogunImageMatch?.[2]?.trim() || null,
+    };
+  }
+
+  const metaImageUrl =
+    normalizeImageUrl(extractMetaContent(html, "og:image")) ||
+    normalizeImageUrl(extractMetaContent(html, "twitter:image"));
+
+  if (isRenderablePageImageUrl(metaImageUrl)) {
+    return {
+      imageUrl: metaImageUrl,
+      imageAlt:
+        extractMetaContent(html, "og:image:alt") || extractMetaContent(html, "twitter:image:alt"),
+    };
+  }
+
+  const firstContentImageMatch = html.match(
+    /<img[^>]+src=["']([^"']+)["'][^>]*?(?:alt=["']([^"']*)["'])?[^>]*>/i,
+  );
+  const firstContentImageUrl = normalizeImageUrl(firstContentImageMatch?.[1] ?? null);
+
+  if (isRenderablePageImageUrl(firstContentImageUrl)) {
+    return {
+      imageUrl: firstContentImageUrl,
+      imageAlt: firstContentImageMatch?.[2]?.trim() || null,
+    };
+  }
+
+  return {
+    imageUrl: null,
+    imageAlt: null,
+  };
 }
 
 function parseSitemapArticles(xml: string) {
@@ -344,6 +771,43 @@ function parseSitemapArticles(xml: string) {
         publishedAt,
         blogTitle: humanizeBlogSlug(blogSlug),
       } satisfies PublicSitemapArticle,
+    ];
+  });
+}
+
+function parsePageSitemapIndex(xml: string) {
+  return Array.from(xml.matchAll(/<loc>([^<]+sitemap_pages_[^<]+)<\/loc>/g))
+    .map((match) => decodeHtmlEntities(match[1]?.trim() ?? ""))
+    .filter(Boolean);
+}
+
+function parseSitemapPages(xml: string) {
+  const matches = Array.from(xml.matchAll(/<url>([\s\S]*?)<\/url>/g));
+
+  return matches.flatMap((match) => {
+    const block = match[1];
+    const url = block.match(/<loc>([^<]+)<\/loc>/)?.[1]?.trim() ?? "";
+
+    if (!url.includes("/pages/")) {
+      return [];
+    }
+
+    const handle = url.split("/pages/")[1]?.split(/[?#]/)[0]?.trim() ?? "";
+
+    if (!handle) {
+      return [];
+    }
+
+    const updatedAt = block.match(/<lastmod>([^<]+)<\/lastmod>/)?.[1]?.trim() ?? null;
+    const title = decodeHtmlEntities(humanizeSlug(handle));
+
+    return [
+      {
+        title,
+        url,
+        updatedAt,
+        pageType: inferPageType(title, handle),
+      } satisfies PublicSitemapPage,
     ];
   });
 }
@@ -738,6 +1202,92 @@ export function isArticleRecommendationRequest(message: string) {
   return ["blog", "blogs", "article", "articles", "post", "posts", "read", "reading"].some((term) =>
     lowered.includes(term),
   );
+}
+
+export function isPageRecommendationRequest(message: string) {
+  const lowered = message.toLowerCase();
+
+  return (
+    ["page", "pages", "faq", "faqs", "about", "support", "contact", "policy", "policies"].some(
+      (term) => lowered.includes(term),
+    ) ||
+    lowered.includes("home page") ||
+    lowered.includes("homepage") ||
+    lowered.includes("events") ||
+    lowered.includes("event")
+  );
+}
+
+function extractPageTopic(message: string) {
+  return message
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .replace(
+      /\b(give|show|share|find|suggest|recommend|recommended|me|some|few|best|top|good|please|pages|page|faqs|faq|about|support|contact|policy|policies|home|homepage|events|event|on|for|the|vpa|website)\b/g,
+      " ",
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function buildPageSearchTerms(message: string) {
+  const lowered = message.toLowerCase();
+  const terms = new Set<string>();
+  const isPageRequest = isPageRecommendationRequest(message);
+  const pageTopic = extractPageTopic(message);
+
+  if (lowered.includes("faq")) {
+    terms.add("faq");
+  }
+
+  if (lowered.includes("about")) {
+    terms.add("about");
+  }
+
+  if (lowered.includes("event")) {
+    terms.add("event");
+  }
+
+  if (lowered.includes("support") || lowered.includes("contact")) {
+    terms.add("support");
+    terms.add("contact");
+  }
+
+  if (lowered.includes("shipping")) {
+    terms.add("shipping");
+  }
+
+  if (lowered.includes("return") || lowered.includes("refund")) {
+    terms.add("returns");
+  }
+
+  if (lowered.includes("privacy")) {
+    terms.add("privacy");
+  }
+
+  if (lowered.includes("terms")) {
+    terms.add("terms");
+  }
+
+  if (lowered.includes("home page") || lowered.includes("homepage") || lowered.includes("home")) {
+    terms.add("home");
+  }
+
+  if (isPageRequest && pageTopic) {
+    terms.add(pageTopic);
+  }
+
+  if (isPageRequest && !pageTopic) {
+    terms.add("faq");
+    terms.add("about");
+    terms.add("support");
+  }
+
+  if (!terms.size) {
+    terms.add(message);
+  }
+
+  return Array.from(terms).slice(0, 4);
 }
 
 function extractArticleTopic(message: string) {
@@ -1314,6 +1864,278 @@ async function getRecommendedArticles(message: string) {
   return getRecommendedArticlesFromPublicSite(message).catch(() => []);
 }
 
+async function getRecommendedPages(message: string) {
+  const storeDomain = process.env.SHOPIFY_STORE_DOMAIN;
+  const adminToken = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
+  const searchTerms = buildPageSearchTerms(message);
+
+  if (!storeDomain || !adminToken || searchTerms.length === 0) {
+    return [];
+  }
+
+  const fields = searchTerms
+    .map(
+      (term, index) => `
+        pageSearch${index}: pages(first: 3, query: ${JSON.stringify(term)}) {
+          nodes {
+            title
+            handle
+            body
+            bodySummary
+            updatedAt
+          }
+        }
+      `,
+    )
+    .join("\n");
+
+  const response = await fetch(`https://${storeDomain}/admin/api/2025-10/graphql.json`, {
+    method: "POST",
+    signal: AbortSignal.timeout(10000),
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": adminToken,
+    },
+    body: JSON.stringify({
+      query: `
+        query RecommendedPages {
+          ${fields}
+        }
+      `,
+    }),
+  });
+
+  if (!response.ok) {
+    return getRecommendedPagesFromPublicSite(message).catch(() => []);
+  }
+
+  const payload = (await response.json()) as {
+    data?: Record<
+      string,
+      {
+        nodes: AdminPageCard[];
+      }
+    >;
+    errors?: Array<{ message: string; extensions?: { code?: string } }>;
+  };
+
+  if (payload.errors?.length) {
+    return getRecommendedPagesFromPublicSite(message).catch(() => []);
+  }
+
+  const deduped = new Map<string, RecommendedPage>();
+
+  for (const result of Object.values(payload.data ?? {})) {
+    for (const page of result.nodes) {
+      const normalized = normalizePage(page);
+      if (normalized && !isStaleEventPage(normalized) && !deduped.has(normalized.url)) {
+        deduped.set(normalized.url, normalized);
+      }
+    }
+  }
+
+  const recommendedPages = Array.from(deduped.values())
+    .sort(
+      (a, b) =>
+        scoreTextMatch(message, `${b.title} ${b.summary} ${b.pageType ?? ""}`) +
+        scorePageIntentMatch(message, `${b.title} ${b.url} ${b.pageType ?? ""}`) -
+        (scoreTextMatch(message, `${a.title} ${a.summary} ${a.pageType ?? ""}`) +
+          scorePageIntentMatch(message, `${a.title} ${a.url} ${a.pageType ?? ""}`)),
+    )
+    .slice(0, 3);
+
+  if (recommendedPages.length > 0) {
+    return recommendedPages;
+  }
+
+  return getRecommendedPagesFromPublicSite(message).catch(() => []);
+}
+
+async function getRecommendedPagesFromPublicSite(message: string) {
+  const sitemapIndexResponse = await fetch("https://www.vpa.com.au/sitemap.xml", {
+    signal: AbortSignal.timeout(10000),
+  });
+
+  if (!sitemapIndexResponse.ok) {
+    return buildHomepagePageFallback(message);
+  }
+
+  const sitemapIndexXml = await sitemapIndexResponse.text();
+  const pageSitemaps = parsePageSitemapIndex(sitemapIndexXml);
+
+  if (!pageSitemaps.length) {
+    return buildHomepagePageFallback(message);
+  }
+
+  const sitemapPayloads = await Promise.all(
+    pageSitemaps.map(async (url) => {
+      try {
+        const response = await fetch(url, {
+          signal: AbortSignal.timeout(10000),
+        });
+
+        if (!response.ok) {
+          return "";
+        }
+
+        return await response.text();
+      } catch {
+        return "";
+      }
+    }),
+  );
+
+  const sitemapPages = sitemapPayloads.flatMap((xml) => (xml ? parseSitemapPages(xml) : []));
+  const searchTerms = buildPageSearchTerms(message);
+
+  const ranked = sitemapPages
+    .map((page) => ({
+      page,
+      score:
+        scoreTextMatch(message, `${page.title} ${page.url} ${page.pageType ?? ""}`) +
+        scorePageIntentMatch(message, `${page.title} ${page.url} ${page.pageType ?? ""}`) +
+        searchTerms.reduce(
+          (sum, term) => sum + scoreTextMatch(term, `${page.title} ${page.url}`),
+          0,
+        ),
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+
+  const fallbackRanked = ranked.length
+    ? ranked
+    : message.toLowerCase().includes("faq")
+      ? sitemapPages
+          .filter((page) => page.url.includes("frequently-asked-questions"))
+          .map((page) => ({ page, score: 1 }))
+      : [];
+
+  if (!fallbackRanked.length) {
+    return buildHomepagePageFallback(message);
+  }
+
+  const hydrated = await Promise.all(
+    fallbackRanked.map(({ page }) => hydratePublicPage(page, sitemapPages, true)),
+  );
+
+  const recommendedPages = hydrated.flatMap((page) =>
+    page && !isStaleEventPage(page) ? [page] : [],
+  );
+
+  if (recommendedPages.length > 0) {
+    return recommendedPages;
+  }
+
+  return buildHomepagePageFallback(message);
+}
+
+function buildHomepagePageFallback(message: string) {
+  if (message.toLowerCase().includes("home page") || message.toLowerCase().includes("homepage")) {
+    return [
+      {
+        title: "VPA Home",
+        summary:
+          "Browse the latest featured products, collections, wellness content, and current promotions on the main VPA storefront.",
+        contentHtml: convertPlainTextToHtml(
+          "Browse the latest featured products, collections, wellness content, and current promotions on the main VPA storefront.",
+        ),
+        url: "https://www.vpa.com.au/",
+        imageUrl: null,
+        imageAlt: null,
+        updatedAt: null,
+        pageType: "Storefront",
+      } satisfies RecommendedPage,
+    ];
+  }
+
+  return [];
+}
+
+async function hydratePublicPage(
+  page: PublicSitemapPage,
+  sitemapPages: PublicSitemapPage[],
+  includeLinkedPages = true,
+): Promise<RecommendedPage | null> {
+  try {
+    const response = await fetch(page.url, {
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!response.ok) {
+      return {
+        title: page.title,
+        summary: page.pageType ? `${page.pageType} page on the VPA website.` : "VPA page.",
+        contentHtml: convertPlainTextToHtml(
+          page.pageType ? `${page.pageType} page on the VPA website.` : "VPA page.",
+        ),
+        url: page.url,
+        imageUrl: null,
+        imageAlt: null,
+        updatedAt: page.updatedAt,
+        pageType: page.pageType,
+      } satisfies RecommendedPage;
+    }
+
+    const html = await response.text();
+    const title =
+      extractMetaContent(html, "og:title") ||
+      html.match(/<title>([\s\S]*?)<\/title>/i)?.[1]?.trim() ||
+      page.title;
+    const normalizedTitle = decodeHtmlEntities(
+      title.replace(/\s*\|\s*VPA.*$/i, "").trim() || page.title,
+    );
+    const summary =
+      extractMetaContent(html, "og:description") ||
+      extractMetaContent(html, "description") ||
+      `${page.pageType ?? "Page"} page on the VPA website.`;
+    const contentHtml = extractStorefrontPageContentHtml(html);
+    const plainContent = stripHtml(contentHtml);
+    const pageImage = extractPageImage(html);
+
+    let linkedPages: RecommendedPage[] | undefined;
+
+    if (
+      includeLinkedPages &&
+      isEventsHubPage({ title: normalizedTitle, url: page.url, pageType: page.pageType })
+    ) {
+      const sitemapPageByUrl = new Map(sitemapPages.map((entry) => [entry.url, entry]));
+      const linkedUrls = extractEventRecapUrlsFromEventsHub(html);
+      const linkedPageCandidates = linkedUrls.map(
+        (url) =>
+          sitemapPageByUrl.get(url) ?? {
+            title: humanizeSlug(url.split("/pages/")[1]?.split(/[?#]/)[0]?.trim() ?? "Event"),
+            url,
+            updatedAt: null,
+            pageType: "Events",
+          },
+      );
+      const hydratedLinkedPages = await Promise.all(
+        linkedPageCandidates.map((candidate) => hydratePublicPage(candidate, sitemapPages, false)),
+      );
+
+      linkedPages = hydratedLinkedPages.flatMap((entry) =>
+        entry && !isStaleEventPage(entry) ? [entry] : [],
+      );
+    }
+
+    return {
+      title: normalizedTitle,
+      summary: decodeHtmlEntities(summary).slice(0, 280).trim(),
+      contentHtml:
+        contentHtml || convertPlainTextToHtml(decodeHtmlEntities(plainContent || summary)),
+      url: page.url,
+      imageUrl: pageImage.imageUrl,
+      imageAlt: pageImage.imageAlt ?? normalizedTitle,
+      updatedAt: page.updatedAt,
+      pageType: inferPageType(title, page.url.split("/pages/")[1] ?? page.title),
+      linkedPages: linkedPages?.length ? linkedPages : undefined,
+    } satisfies RecommendedPage;
+  } catch {
+    return null;
+  }
+}
+
 function scoreTextMatch(message: string, haystack: string) {
   const loweredMessage = message.toLowerCase();
   const loweredHaystack = haystack.toLowerCase();
@@ -1337,6 +2159,7 @@ async function createOpenAiReply(
   storeSnapshot: Awaited<ReturnType<typeof getAdminStoreSnapshot>>,
   recommendedProducts: RecommendedProduct[],
   recommendedArticles: RecommendedArticle[],
+  recommendedPages: RecommendedPage[],
 ) {
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.OPENAI_MODEL ?? "gpt-5.4";
@@ -1385,6 +2208,9 @@ ${recommendedProducts.length ? JSON.stringify(recommendedProducts, null, 2) : "N
 
 Relevant blog/article context for this reply:
 ${recommendedArticles.length ? JSON.stringify(recommendedArticles, null, 2) : "No relevant blog articles available."}
+
+Relevant Shopify page context for this reply:
+${recommendedPages.length ? JSON.stringify(recommendedPages, null, 2) : "No relevant store pages available."}
   `.trim();
 
   const response = await fetch("https://api.openai.com/v1/responses", {
@@ -1538,6 +2364,24 @@ function shouldPreferArticle(message: string) {
   );
 }
 
+function shouldPreferPage(message: string) {
+  const lowered = message.toLowerCase();
+
+  return (
+    isPageRecommendationRequest(message) ||
+    lowered.includes("faq") ||
+    lowered.includes("about") ||
+    lowered.includes("support") ||
+    lowered.includes("contact") ||
+    lowered.includes("policy") ||
+    lowered.includes("returns") ||
+    lowered.includes("shipping") ||
+    lowered.includes("event") ||
+    lowered.includes("homepage") ||
+    lowered.includes("home page")
+  );
+}
+
 export const reply = action({
   args: {
     message: v.string(),
@@ -1579,6 +2423,7 @@ export const reply = action({
           recommendedProductsCollectionTitle: null,
           recommendedProducts: [],
           recommendedArticles: [],
+          recommendedPages: [],
           orderPreview: null,
           orderPreviews: [],
           requiresAccountConnection: false,
@@ -1595,6 +2440,7 @@ export const reply = action({
         recommendedProductsCollectionTitle: null,
         recommendedProducts: [],
         recommendedArticles: [],
+        recommendedPages: [],
         orderPreview: null,
         orderPreviews: orders,
         requiresAccountConnection: false,
@@ -1618,6 +2464,7 @@ export const reply = action({
           recommendedProductsCollectionTitle: null,
           recommendedProducts: [],
           recommendedArticles: [],
+          recommendedPages: [],
           orderPreview: null,
           orderPreviews: [],
           requiresAccountConnection: false,
@@ -1638,6 +2485,7 @@ export const reply = action({
           recommendedProductsCollectionTitle: null,
           recommendedProducts: [],
           recommendedArticles: [],
+          recommendedPages: [],
           orderPreview: null,
           orderPreviews: [],
           requiresAccountConnection: false,
@@ -1651,6 +2499,7 @@ export const reply = action({
         recommendedProductsCollectionTitle: null,
         recommendedProducts: [],
         recommendedArticles: [],
+        recommendedPages: [],
         orderPreview: trackedOrder,
         orderPreviews: [],
         requiresAccountConnection: false,
@@ -1660,8 +2509,11 @@ export const reply = action({
     const storeSnapshot = await getAdminStoreSnapshot().catch(() => null);
     const shouldPrioritizeExerciseGuidance = isExerciseGuidanceQuestion(message);
     const shouldPrioritizeArticleRecommendations = isArticleRecommendationRequest(message);
+    const shouldPrioritizePageRecommendations = isPageRecommendationRequest(message);
     const productRecommendations =
-      shouldPrioritizeExerciseGuidance || shouldPrioritizeArticleRecommendations
+      shouldPrioritizeExerciseGuidance ||
+      shouldPrioritizeArticleRecommendations ||
+      shouldPrioritizePageRecommendations
         ? ({
             products: [],
             collectionTitle: null,
@@ -1676,20 +2528,28 @@ export const reply = action({
     const recommendedProducts = productRecommendations.products;
     const recommendedProductsCollectionTitle = productRecommendations.collectionTitle;
     const recommendedArticles = await getRecommendedArticles(message).catch(() => []);
+    const recommendedPages = await getRecommendedPages(message).catch(() => []);
     let text =
       (await createOpenAiReply(
         message,
         storeSnapshot,
         recommendedProducts,
         recommendedArticles,
+        recommendedPages,
       ).catch(() => null)) ??
       "I’m here to help with VPA products, workouts, and order support. Ask me about recovery, muscle gain, or what product might fit your goal.";
 
     const shouldHideProductCards =
       isInformationalHealthQuestion(message) ||
       shouldPrioritizeExerciseGuidance ||
-      shouldPrioritizeArticleRecommendations;
+      shouldPrioritizeArticleRecommendations ||
+      shouldPrioritizePageRecommendations;
+    const shouldShowPage =
+      !shouldPrioritizeExerciseGuidance &&
+      (shouldPrioritizePageRecommendations || shouldPreferPage(message)) &&
+      recommendedPages.length > 0;
     const shouldShowArticle =
+      !shouldShowPage &&
       !shouldPrioritizeExerciseGuidance &&
       (shouldPrioritizeArticleRecommendations || shouldPreferArticle(message)) &&
       recommendedArticles.length > 0;
@@ -1715,9 +2575,26 @@ export const reply = action({
           : `Here’s a VPA article that covers this topic.`;
     }
 
+    if (shouldShowPage) {
+      text = isFormLikePage(recommendedPages[0])
+        ? "This page includes a sign-up form. Open the VPA page to complete your registration."
+        : recommendedPages.length > 1
+          ? "Here are a few VPA pages that match what you asked for."
+          : "Here’s the VPA page that covers this topic.";
+    }
+
     if (shouldPrioritizeArticleRecommendations && recommendedArticles.length === 0) {
       text =
         "I couldn’t find a matching VPA blog article just yet, but I can help narrow it down by topic like protein, creatine, recovery, or workouts.";
+    }
+
+    if (
+      shouldPrioritizePageRecommendations &&
+      recommendedPages.length === 0 &&
+      recommendedArticles.length === 0
+    ) {
+      text =
+        "I couldn’t find a matching VPA page just yet, but I can help with FAQs, About, support, shipping, returns, or events.";
     }
 
     if (shouldShowProductGallery) {
@@ -1731,8 +2608,10 @@ export const reply = action({
       source: text ? "live" : "fallback",
       storeSnapshot,
       recommendedProductsCollectionTitle,
-      recommendedProducts: shouldHideProductCards || shouldShowArticle ? [] : recommendedProducts,
+      recommendedProducts:
+        shouldHideProductCards || shouldShowArticle || shouldShowPage ? [] : recommendedProducts,
       recommendedArticles: shouldShowArticle ? recommendedArticles : [],
+      recommendedPages: shouldShowPage ? recommendedPages : [],
       orderPreview: null,
       orderPreviews: [],
       requiresAccountConnection: false,
@@ -1748,6 +2627,7 @@ function buildOrderConnectionRequiredResponse() {
     recommendedProductsCollectionTitle: null,
     recommendedProducts: [],
     recommendedArticles: [],
+    recommendedPages: [],
     orderPreview: null,
     orderPreviews: [],
     requiresAccountConnection: true,
@@ -1762,6 +2642,7 @@ function buildOrderAccountMismatchResponse(connectedEmail: string) {
     recommendedProductsCollectionTitle: null,
     recommendedProducts: [],
     recommendedArticles: [],
+    recommendedPages: [],
     orderPreview: null,
     orderPreviews: [],
     requiresAccountConnection: false,

@@ -1,9 +1,13 @@
 import { z } from "zod";
+import { api } from "../../convex/_generated/api";
+import { convexHttpClient } from "./convex-http";
 
 export type CustomerAuthMode = "login" | "register";
+const CUSTOMER_SESSION_REFRESH_LEAD_MS = 5 * 60 * 1000;
 
 export type CustomerAuthSession = {
   accessToken: string;
+  refreshToken?: string;
   expiresAt: string;
   idToken?: string;
   customer: {
@@ -35,6 +39,7 @@ export type CustomerAuthResponse =
 
 const customerSessionSchema = z.object({
   accessToken: z.string().min(1),
+  refreshToken: z.string().min(1).optional(),
   expiresAt: z.string().min(1),
   customer: z.object({
     id: z.string().min(1),
@@ -97,10 +102,6 @@ export function parseCustomerSession(input: unknown): CustomerAuthSession | null
     return null;
   }
 
-  if (new Date(parsed.data.expiresAt).getTime() <= Date.now()) {
-    return null;
-  }
-
   return parsed.data;
 }
 
@@ -147,6 +148,60 @@ export function clearStoredCustomerSession() {
   try {
     window.localStorage.removeItem(CUSTOMER_SESSION_STORAGE_KEY);
   } catch {}
+}
+
+export function isCustomerSessionExpired(session: CustomerAuthSession) {
+  return new Date(session.expiresAt).getTime() <= Date.now();
+}
+
+export function shouldRefreshCustomerSession(
+  session: CustomerAuthSession,
+  leadMs = CUSTOMER_SESSION_REFRESH_LEAD_MS,
+) {
+  return new Date(session.expiresAt).getTime() <= Date.now() + leadMs;
+}
+
+export async function refreshCustomerSessionIfNeeded(
+  session: CustomerAuthSession | null,
+  options?: {
+    force?: boolean;
+  },
+) {
+  if (!session) {
+    return null;
+  }
+
+  const shouldRefresh = options?.force || shouldRefreshCustomerSession(session);
+
+  if (!shouldRefresh) {
+    return session;
+  }
+
+  if (!session.refreshToken || typeof window === "undefined") {
+    if (isCustomerSessionExpired(session)) {
+      clearStoredCustomerSession();
+      return null;
+    }
+
+    return session;
+  }
+
+  try {
+    const result = await convexHttpClient.action(api.customerConnect.refreshConnection, {
+      refreshToken: session.refreshToken,
+      requestOrigin: window.location.origin,
+    });
+
+    writeStoredCustomerSession(result.session);
+    return result.session;
+  } catch {
+    if (isCustomerSessionExpired(session)) {
+      clearStoredCustomerSession();
+      return null;
+    }
+
+    return session;
+  }
 }
 
 export function readPendingCustomerConnectRequest(): PendingCustomerConnectRequest | null {
