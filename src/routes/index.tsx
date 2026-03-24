@@ -29,6 +29,12 @@ import {
 } from "../lib/customer-auth";
 import { normalizeRenderedRichText, sanitizeRichHtml } from "../lib/html-sanitizer";
 import {
+  buildSafeStorefrontProductJsonUrl,
+  sanitizeAppUrl,
+  sanitizeAssetUrl,
+  sanitizeVpaUrl,
+} from "../lib/url-safety";
+import {
   buildAssistantMessages,
   buildWorkoutCardIds,
   initialMessages,
@@ -863,6 +869,7 @@ function App() {
 
   const cartSubtotal = cartItems.reduce((sum, item) => sum + item.bundlePrice * item.selections, 0);
   const checkoutUrl = buildCheckoutUrl(cartItems);
+  const safeCheckoutUrl = sanitizeVpaUrl(checkoutUrl);
   const cartCount = cartItems.reduce((sum, item) => sum + item.selections, 0);
   const activityBadgeCount =
     workoutActivity.filter((entry) => entry.timestamp > lastActivitySeenAt).length +
@@ -1220,9 +1227,17 @@ function App() {
                           <div className="chat-markdown text-[1.02rem] leading-8 text-[#1D1D1D]">
                             <ReactMarkdown
                               components={{
-                                a: ({ node: _node, ...props }) => (
-                                  <a {...props} target="_blank" rel="noreferrer" />
-                                ),
+                                a: ({ node: _node, href, children, ...props }) => {
+                                  const safeHref = sanitizeVpaUrl(href);
+
+                                  return safeHref ? (
+                                    <a {...props} href={safeHref} target="_blank" rel="noreferrer">
+                                      {children}
+                                    </a>
+                                  ) : (
+                                    <span>{children}</span>
+                                  );
+                                },
                               }}
                             >
                               {message.text}
@@ -1527,9 +1542,9 @@ function App() {
                       className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-x-4 gap-y-3 border-b border-[#1D1D1D]/10 py-5 first:pt-1 sm:grid-cols-[6.75rem_minmax(0,1fr)_6.5rem]"
                     >
                       <div className="h-[5.5rem] w-[5.5rem] overflow-hidden rounded-[0.35rem] bg-[#F6F7F2] sm:h-[6.75rem] sm:w-[6.75rem]">
-                        {item.imageUrl ? (
+                        {sanitizeAssetUrl(item.imageUrl) ? (
                           <img
-                            src={item.imageUrl}
+                            src={sanitizeAssetUrl(item.imageUrl) ?? undefined}
                             alt={item.productTitle}
                             className="h-full w-full object-cover"
                           />
@@ -1616,9 +1631,9 @@ function App() {
                     >
                       Clear cart
                     </button>
-                    {checkoutUrl ? (
+                    {safeCheckoutUrl ? (
                       <a
-                        href={checkoutUrl}
+                        href={safeCheckoutUrl}
                         target="_blank"
                         rel="noreferrer"
                         className="rounded-[0.95rem] bg-[#161616] px-5 py-3 text-sm font-extrabold uppercase tracking-[0.08em] text-white no-underline"
@@ -1878,6 +1893,9 @@ function App() {
 }
 
 function ArticleCard({ article }: { article: RecommendedArticle }) {
+  const safeArticleUrl = sanitizeVpaUrl(article.url);
+  const safeArticleImageUrl = sanitizeAssetUrl(article.imageUrl);
+
   return (
     <article className="overflow-hidden rounded-[1.5rem] border border-[#1D1D1D]/10 bg-white">
       <div className="space-y-6 p-5 lg:p-7">
@@ -1887,14 +1905,16 @@ function ArticleCard({ article }: { article: RecommendedArticle }) {
             <span>/</span>
             <span>{article.blogTitle ?? "Featured"}</span>
           </div>
-          <a
-            href={article.url}
-            target="_blank"
-            rel="noreferrer"
-            className="text-[#3B7539] no-underline"
-          >
-            Read on site
-          </a>
+          {safeArticleUrl ? (
+            <a
+              href={safeArticleUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[#3B7539] no-underline"
+            >
+              Read on site
+            </a>
+          ) : null}
         </div>
 
         <div className="space-y-3">
@@ -1904,10 +1924,10 @@ function ArticleCard({ article }: { article: RecommendedArticle }) {
           <div className="text-base font-medium text-[#717171]">{formatArticleMeta(article)}</div>
         </div>
 
-        {article.imageUrl ? (
+        {safeArticleImageUrl ? (
           <div className="overflow-hidden rounded-[0.4rem] bg-[#f6f6f3]">
             <img
-              src={article.imageUrl}
+              src={safeArticleImageUrl}
               alt={article.imageAlt ?? article.title}
               className="max-h-[34rem] w-full object-cover"
               loading="lazy"
@@ -1934,6 +1954,8 @@ function PageCard({
   page: RecommendedPage;
   onSelectLinkedPage?: (page: RecommendedPage, linkedPages: RecommendedPage[]) => void;
 }) {
+  const safePageUrl = sanitizeVpaUrl(page.url);
+  const safePageImageUrl = sanitizeAssetUrl(page.imageUrl);
   const isFormPage = isFormLikePage(page);
   const summaryText = normalizeRenderedRichText(page.summary);
   const bodyText = normalizeRenderedRichText(page.contentHtml);
@@ -1949,10 +1971,10 @@ function PageCard({
 
   return (
     <article className="overflow-hidden rounded-[1.5rem] border border-[#1D1D1D]/10 bg-white">
-      {page.imageUrl ? (
+      {safePageImageUrl ? (
         <div className="border-b border-[#1D1D1D]/10 bg-[#F7FBF8]">
           <img
-            src={page.imageUrl}
+            src={safePageImageUrl}
             alt={page.imageAlt ?? page.title}
             className="max-h-[34rem] w-full object-cover"
             loading="lazy"
@@ -1967,14 +1989,16 @@ function PageCard({
             <span>/</span>
             <span>{page.pageType ?? "Page"}</span>
           </div>
-          <a
-            href={page.url}
-            target="_blank"
-            rel="noreferrer"
-            className="text-[#3B7539] no-underline"
-          >
-            Open page
-          </a>
+          {safePageUrl ? (
+            <a
+              href={safePageUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[#3B7539] no-underline"
+            >
+              Open page
+            </a>
+          ) : null}
         </div>
 
         <div className="space-y-3">
@@ -2006,14 +2030,16 @@ function PageCard({
               This page includes a live form, so the best experience is to open it on the VPA
               website and complete it there.
             </p>
-            <a
-              href={page.url}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex rounded-[0.95rem] bg-[#173A40] px-5 py-3 text-sm font-extrabold uppercase tracking-[0.08em] text-white no-underline"
-            >
-              Open Form On Site
-            </a>
+            {safePageUrl ? (
+              <a
+                href={safePageUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex rounded-[0.95rem] bg-[#173A40] px-5 py-3 text-sm font-extrabold uppercase tracking-[0.08em] text-white no-underline"
+              >
+                Open Form On Site
+              </a>
+            ) : null}
           </div>
         ) : null}
 
@@ -2035,6 +2061,7 @@ function OrderStatusCard({
   order: typeof sampleOrder;
   customerSession: CustomerAuthSession | null;
 }) {
+  const safeTrackingUrl = sanitizeAppUrl(order.trackingUrl);
   const orderSteps = buildOrderSteps(order);
 
   return (
@@ -2157,9 +2184,9 @@ function OrderStatusCard({
                 </div>
               ) : null}
             </div>
-            {order.trackingUrl ? (
+            {safeTrackingUrl ? (
               <a
-                href={order.trackingUrl}
+                href={safeTrackingUrl}
                 target="_blank"
                 rel="noreferrer"
                 className="mt-4 inline-flex rounded-full bg-[#173A40] px-4 py-2 text-sm font-semibold text-white no-underline"
@@ -2325,9 +2352,9 @@ function ArticleGrid({
             className="block rounded-[1.2rem] border border-[#1D1D1D]/10 bg-white p-4 text-left text-black"
           >
             <div className="space-y-3">
-              {article.imageUrl ? (
+              {sanitizeAssetUrl(article.imageUrl) ? (
                 <img
-                  src={article.imageUrl}
+                  src={sanitizeAssetUrl(article.imageUrl) ?? undefined}
                   alt={article.imageAlt ?? article.title}
                   className="h-48 w-full rounded-[0.8rem] object-cover"
                   loading="lazy"
@@ -2376,10 +2403,10 @@ function PageGrid({
             className="block rounded-[1.2rem] border border-[#1D1D1D]/10 bg-white p-4 text-left text-black"
           >
             <div className="space-y-3">
-              {page.imageUrl ? (
+              {sanitizeAssetUrl(page.imageUrl) ? (
                 <div className="overflow-hidden rounded-[1rem] border border-[#1D1D1D]/10 bg-[#F7FBF8]">
                   <img
-                    src={page.imageUrl}
+                    src={sanitizeAssetUrl(page.imageUrl) ?? undefined}
                     alt={page.imageAlt ?? page.title}
                     className="h-44 w-full object-cover"
                     loading="lazy"
@@ -2422,9 +2449,9 @@ function EventRecapGrid({
             className="group overflow-hidden rounded-[1.4rem] border border-[#1D1D1D]/10 bg-[#222222] text-left text-white"
           >
             <div className="relative">
-              {page.imageUrl ? (
+              {sanitizeAssetUrl(page.imageUrl) ? (
                 <img
-                  src={page.imageUrl}
+                  src={sanitizeAssetUrl(page.imageUrl) ?? undefined}
                   alt={page.imageAlt ?? page.title}
                   className="h-72 w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
                   loading="lazy"
@@ -2462,6 +2489,7 @@ function ProductCard({
   product: RecommendedProduct;
   onAddToCart: (item: Omit<ChatCartItem, "selections">) => void;
 }) {
+  const safeProductUrl = sanitizeVpaUrl(product.url);
   const [selectedBundle, setSelectedBundle] = useState<string | null>(
     product.bundlePricing[0]?.label ?? null,
   );
@@ -2532,6 +2560,7 @@ function ProductCard({
   });
   const selectedVariant = findVariantChoice(resolvedVariantChoices, selectedOptions);
   const activeImageUrl = selectedVariant?.imageUrl ?? product.imageUrl;
+  const safeActiveImageUrl = sanitizeAssetUrl(activeImageUrl);
   const activeBundlePrice =
     product.bundlePricing.find((tier) => tier.label === selectedBundle)?.totalPrice ??
     selectedVariant?.price ??
@@ -2594,7 +2623,7 @@ function ProductCard({
       return;
     }
 
-    const resolvedProductJsonUrl = buildStorefrontProductJsonUrl(product.url);
+    const resolvedProductJsonUrl = buildSafeStorefrontProductJsonUrl(product.url);
 
     if (!resolvedProductJsonUrl) {
       return;
@@ -2672,9 +2701,9 @@ function ProductCard({
       <div className="grid gap-0 lg:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
         <div className="bg-white px-4 pt-4 pb-4 lg:px-5 lg:pt-5 lg:pb-6">
           <div className="overflow-hidden rounded-[1.35rem]">
-            {activeImageUrl ? (
+            {safeActiveImageUrl ? (
               <img
-                src={activeImageUrl}
+                src={safeActiveImageUrl}
                 alt={product.imageAlt ?? product.title}
                 className="block h-full min-h-72 w-full object-cover lg:min-h-[26rem]"
                 loading="lazy"
@@ -2712,9 +2741,9 @@ function ProductCard({
                                 activeFlavourSlot === index ? "ring-2 ring-[#3B7539]" : ""
                               }`}
                             >
-                              {flavourImage ? (
+                              {sanitizeAssetUrl(flavourImage) ? (
                                 <img
-                                  src={flavourImage}
+                                  src={sanitizeAssetUrl(flavourImage) ?? undefined}
                                   alt={value}
                                   className="h-full w-full object-cover"
                                   loading="lazy"
@@ -2869,8 +2898,8 @@ function ProductCard({
                         .join(",")}`,
                       variantSelections: selectedVariantSelections,
                       productTitle: product.title,
-                      productUrl: product.url,
-                      imageUrl: activeImageUrl,
+                      productUrl: safeProductUrl ?? product.url,
+                      imageUrl: safeActiveImageUrl,
                       flavourSummary,
                       bundleLabel: selectedPurchaseLabel,
                       unitQuantity: selectedQuantity,
@@ -2894,14 +2923,16 @@ function ProductCard({
                 </div>
               ) : null}
               <div className="text-sm font-semibold text-black">
-                <a
-                  href={product.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-black no-underline hover:text-black"
-                >
-                  View full product on vpa.com.au
-                </a>
+                {safeProductUrl ? (
+                  <a
+                    href={safeProductUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-black no-underline hover:text-black"
+                  >
+                    View full product on vpa.com.au
+                  </a>
+                ) : null}
               </div>
             </div>
           </div>
@@ -2948,9 +2979,9 @@ function ProductCard({
                           isActiveValue ? "ring-2 ring-[#3B7539]" : ""
                         }`}
                       >
-                        {flavourImage ? (
+                        {sanitizeAssetUrl(flavourImage) ? (
                           <img
-                            src={flavourImage}
+                            src={sanitizeAssetUrl(flavourImage) ?? undefined}
                             alt={value}
                             className="h-full w-full object-cover"
                             loading="lazy"
@@ -3038,39 +3069,45 @@ function ProductGrid({
         </div>
       </div>
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-        {products.map((product) => (
-          <button
-            type="button"
-            key={product.url}
-            onClick={() => onSelectProduct(product)}
-            className="block cursor-pointer rounded-[1rem] text-left no-underline"
-          >
-            <article className="space-y-3 rounded-[1rem] border border-transparent p-2 transition-colors duration-150 hover:border-[#3B7539]/25 hover:bg-[#F5F8F3]">
-              <div className="overflow-hidden rounded-[0.75rem] bg-[#f5f7f3]">
-                {product.imageUrl ? (
-                  <img
-                    src={product.imageUrl}
-                    alt={product.title}
-                    className="aspect-square w-full object-contain p-4"
-                    loading="lazy"
-                  />
-                ) : (
-                  <div className="flex aspect-square items-center justify-center p-4 text-center text-sm font-semibold text-black">
+        {products.map((product) => {
+          const safeProductImageUrl = sanitizeAssetUrl(product.imageUrl);
+
+          return (
+            <button
+              type="button"
+              key={product.url}
+              onClick={() => onSelectProduct(product)}
+              className="block cursor-pointer rounded-[1rem] text-left no-underline"
+            >
+              <article className="space-y-3 rounded-[1rem] border border-transparent p-2 transition-colors duration-150 hover:border-[#3B7539]/25 hover:bg-[#F5F8F3]">
+                <div className="overflow-hidden rounded-[0.75rem] bg-[#f5f7f3]">
+                  {safeProductImageUrl ? (
+                    <img
+                      src={safeProductImageUrl}
+                      alt={product.title}
+                      className="aspect-square w-full object-contain p-4"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="flex aspect-square items-center justify-center p-4 text-center text-sm font-semibold text-black">
+                      {product.title}
+                    </div>
+                  )}
+                </div>
+                <div className="space-y-1 text-center">
+                  <h3 className="m-0 text-sm font-semibold uppercase tracking-[0.08em] text-black sm:text-base">
                     {product.title}
-                  </div>
-                )}
-              </div>
-              <div className="space-y-1 text-center">
-                <h3 className="m-0 text-sm font-semibold uppercase tracking-[0.08em] text-black sm:text-base">
-                  {product.title}
-                </h3>
-                <p className="m-0 text-lg font-semibold text-[#4c8c3d]">
-                  {product.price.startsWith("AUD ") ? `$${product.price.slice(4)}` : product.price}
-                </p>
-              </div>
-            </article>
-          </button>
-        ))}
+                  </h3>
+                  <p className="m-0 text-lg font-semibold text-[#4c8c3d]">
+                    {product.price.startsWith("AUD ")
+                      ? `$${product.price.slice(4)}`
+                      : product.price}
+                  </p>
+                </div>
+              </article>
+            </button>
+          );
+        })}
       </div>
     </section>
   );
@@ -3456,16 +3493,6 @@ function isFlavourOption(optionName: string) {
 
 function areArraysEqual(left: string[], right: string[]) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-function buildStorefrontProductJsonUrl(productUrl: string) {
-  try {
-    const url = new URL(productUrl);
-    const pathname = url.pathname.endsWith("/") ? url.pathname.slice(0, -1) : url.pathname;
-    return `${url.origin}${pathname}.js`;
-  } catch {
-    return null;
-  }
 }
 
 function findVariantChoice<

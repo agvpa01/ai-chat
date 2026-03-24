@@ -1,5 +1,6 @@
 import { Clock3, Pause, Play, PlayCircle, RotateCcw, SkipForward, X } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { buildSafeYoutubeEmbedUrl, sanitizeAssetUrl, sanitizeVpaUrl } from "../lib/url-safety";
 
 export type WorkoutCatalogProduct = {
   slug: string;
@@ -72,7 +73,7 @@ export function WorkoutCardGrid({
             <div className="aspect-[4/3] overflow-hidden bg-[#EEF4EE]">
               {workout.imageUrl ? (
                 <img
-                  src={workout.imageUrl}
+                  src={sanitizeAssetUrl(workout.imageUrl) ?? undefined}
                   alt={workout.name}
                   className="h-full w-full object-cover"
                   loading="lazy"
@@ -415,9 +416,9 @@ export function WorkoutDetailCard({
                     >
                       <div className="grid gap-0 sm:grid-cols-[5.75rem_minmax(0,1fr)]">
                         <div className="relative aspect-square overflow-hidden bg-[#EEF4EE]">
-                          {exercise.imageUrl ? (
+                          {sanitizeAssetUrl(exercise.imageUrl) ? (
                             <img
-                              src={exercise.imageUrl}
+                              src={sanitizeAssetUrl(exercise.imageUrl) ?? undefined}
                               alt={exercise.name}
                               className="h-full w-full object-cover"
                               loading="lazy"
@@ -500,33 +501,37 @@ export function WorkoutDetailCard({
                         </div>
 
                         <div className="grid gap-3 md:grid-cols-2">
-                          {workout.recommendedProducts.map((product) => (
-                            <a
-                              key={product.slug}
-                              href={product.productUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="rounded-[1.1rem] border border-[#173A40]/10 bg-[#F8FBF8] p-4 text-inherit no-underline transition-transform duration-200 hover:-translate-y-0.5"
-                            >
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <span className="rounded-full bg-white px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-[#2F6A4A]">
-                                  {product.category}
-                                </span>
-                                <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#173A40]/58">
-                                  {product.priceLabel}
-                                </span>
-                              </div>
-                              <h4 className="mt-3 mb-0 text-base font-semibold tracking-[-0.02em] text-[#173A40]">
-                                {product.title}
-                              </h4>
-                              <p className="mt-2 mb-0 text-sm leading-6 text-[#173A40]/68">
-                                {product.benefit}
-                              </p>
-                              <div className="mt-3 text-xs font-semibold uppercase tracking-[0.12em] text-[#173A40]">
-                                View supplement
-                              </div>
-                            </a>
-                          ))}
+                          {workout.recommendedProducts.map((product) => {
+                            const safeProductUrl = sanitizeVpaUrl(product.productUrl);
+
+                            return safeProductUrl ? (
+                              <a
+                                key={product.slug}
+                                href={safeProductUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="rounded-[1.1rem] border border-[#173A40]/10 bg-[#F8FBF8] p-4 text-inherit no-underline transition-transform duration-200 hover:-translate-y-0.5"
+                              >
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="rounded-full bg-white px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-[#2F6A4A]">
+                                    {product.category}
+                                  </span>
+                                  <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#173A40]/58">
+                                    {product.priceLabel}
+                                  </span>
+                                </div>
+                                <h4 className="mt-3 mb-0 text-base font-semibold tracking-[-0.02em] text-[#173A40]">
+                                  {product.title}
+                                </h4>
+                                <p className="mt-2 mb-0 text-sm leading-6 text-[#173A40]/68">
+                                  {product.benefit}
+                                </p>
+                                <div className="mt-3 text-xs font-semibold uppercase tracking-[0.12em] text-[#173A40]">
+                                  View supplement
+                                </div>
+                              </a>
+                            ) : null;
+                          })}
                         </div>
                       </div>
                     ) : null}
@@ -606,9 +611,9 @@ export function WorkoutDetailCard({
                       <div className="rounded-[1.4rem] border border-[#173A40]/10 bg-white p-4 sm:p-5">
                         <div className="grid gap-5 md:grid-cols-[9rem_minmax(0,1fr)]">
                           <div className="relative mx-auto aspect-square w-full max-w-[9rem] overflow-hidden rounded-[1.2rem] bg-[#EAF2EC]">
-                            {activeExercise.imageUrl ? (
+                            {sanitizeAssetUrl(activeExercise.imageUrl) ? (
                               <img
-                                src={activeExercise.imageUrl}
+                                src={sanitizeAssetUrl(activeExercise.imageUrl) ?? undefined}
                                 alt={activeExercise.name}
                                 className="h-full w-full object-cover"
                               />
@@ -754,10 +759,12 @@ export function WorkoutDetailCard({
             </div>
             <div className="aspect-video bg-black">
               <iframe
-                src={selectedVideo.embedUrl}
+                src={buildSafeYoutubeEmbedUrl(selectedVideo.embedUrl) ?? undefined}
                 title={selectedVideo.title}
                 className="h-full w-full"
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                referrerPolicy="no-referrer"
+                sandbox="allow-scripts allow-same-origin allow-presentation"
                 allowFullScreen
               />
             </div>
@@ -790,22 +797,5 @@ function shortWorkoutSummary(workout: WorkoutCatalogWorkout) {
 }
 
 function buildYoutubeEmbedUrl(youtubeUrl?: string) {
-  if (!youtubeUrl) {
-    return null;
-  }
-
-  try {
-    const url = new URL(youtubeUrl);
-    const videoId = url.hostname.includes("youtu.be")
-      ? url.pathname.replace("/", "")
-      : (url.searchParams.get("v") ?? "");
-
-    if (!videoId) {
-      return null;
-    }
-
-    return `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0`;
-  } catch {
-    return null;
-  }
+  return buildSafeYoutubeEmbedUrl(youtubeUrl);
 }

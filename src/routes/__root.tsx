@@ -2,7 +2,18 @@ import { HeadContent, Scripts, createRootRoute } from "@tanstack/react-router";
 
 import appCss from "../styles.css?url";
 
-const THEME_INIT_SCRIPT = `(function(){try{var stored=window.localStorage.getItem('theme');var mode=(stored==='light'||stored==='dark'||stored==='auto')?stored:'auto';var prefersDark=window.matchMedia('(prefers-color-scheme: dark)').matches;var resolved=mode==='auto'?(prefersDark?'dark':'light'):mode;var root=document.documentElement;root.classList.remove('light','dark');root.classList.add(resolved);if(mode==='auto'){root.removeAttribute('data-theme')}else{root.setAttribute('data-theme',mode)}root.style.colorScheme=resolved;}catch(e){}})();`;
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https:",
+  "font-src 'self' data: https:",
+  "connect-src 'self' https: ws: wss:",
+  "media-src 'self' blob: https:",
+  "frame-src https://www.youtube.com https://www.youtube-nocookie.com",
+].join("; ");
 
 export const Route = createRootRoute({
   head: () => ({
@@ -16,6 +27,14 @@ export const Route = createRootRoute({
       },
       {
         title: "VPA Coach",
+      },
+      {
+        name: "referrer",
+        content: "no-referrer",
+      },
+      {
+        httpEquiv: "Content-Security-Policy",
+        content: CONTENT_SECURITY_POLICY,
       },
     ],
     links: [
@@ -32,7 +51,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+        <script src="/theme-init.js" />
         <HeadContent />
       </head>
       <body className="font-sans antialiased [overflow-wrap:anywhere] selection:bg-[rgba(79,184,178,0.24)]">

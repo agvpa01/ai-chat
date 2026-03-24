@@ -24,4 +24,19 @@ describe("html sanitizer", () => {
       "Hello world.",
     );
   });
+
+  test("removes unsafe link protocols and link target attributes", () => {
+    const sanitized = sanitizeRichHtml(
+      `
+        <p><a href="javascript:alert(1)" target="_blank">Bad link</a></p>
+        <p><a href="https://www.vpa.com.au/pages/returns" target="_blank">Safe link</a></p>
+      `,
+    );
+
+    expect(sanitized).toContain(">Bad link</a>");
+    expect(sanitized).not.toContain("javascript:");
+    expect(sanitized).not.toContain('target="_blank"');
+    expect(sanitized).toContain('href="https://www.vpa.com.au/pages/returns"');
+    expect(sanitized).toContain('rel="nofollow noreferrer noopener"');
+  });
 });
