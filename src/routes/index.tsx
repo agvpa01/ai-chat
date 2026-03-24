@@ -27,6 +27,7 @@ import {
   readStoredCustomerSession,
   type CustomerAuthSession,
 } from "../lib/customer-auth";
+import { normalizeRenderedRichText, sanitizeRichHtml } from "../lib/html-sanitizer";
 import {
   buildAssistantMessages,
   buildWorkoutCardIds,
@@ -1511,7 +1512,7 @@ function App() {
                 type="button"
                 onClick={() => setIsCartOpen(false)}
                 aria-label="Close cart"
-                className="h-10 w-10 rounded-full border border-[#1D1D1D]/10 bg-white text-sm font-semibold text-black transition-colors hover:bg-[#F6F7F2]"
+                className="inline-flex items-center justify-center px-1 text-[2rem] leading-none font-normal text-black transition-opacity hover:opacity-65"
               >
                 ×
               </button>
@@ -1918,7 +1919,7 @@ function ArticleCard({ article }: { article: RecommendedArticle }) {
           <p className="m-0">{article.summary}</p>
           <div
             className="article-content"
-            dangerouslySetInnerHTML={{ __html: sanitizeArticleHtml(article.contentHtml) }}
+            dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(article.contentHtml) }}
           />
         </div>
       </div>
@@ -1935,7 +1936,7 @@ function PageCard({
 }) {
   const isFormPage = isFormLikePage(page);
   const summaryText = normalizeRenderedRichText(page.summary);
-  const bodyText = normalizeRenderedRichText(sanitizeArticleHtml(page.contentHtml));
+  const bodyText = normalizeRenderedRichText(page.contentHtml);
   const bodyExtendsSummary =
     summaryText.length > 0 &&
     bodyText.startsWith(summaryText) &&
@@ -1992,7 +1993,7 @@ function PageCard({
         {shouldShowBody ? (
           <div
             className="article-content text-lg leading-9 text-black"
-            dangerouslySetInnerHTML={{ __html: sanitizeArticleHtml(page.contentHtml) }}
+            dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(page.contentHtml) }}
           />
         ) : null}
 
@@ -3360,33 +3361,6 @@ function normalizeFlavourName(value: string) {
   return value
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
-
-function sanitizeArticleHtml(html: string) {
-  return html
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/\son\w+="[^"]*"/gi, "")
-    .replace(/\son\w+='[^']*'/gi, "")
-    .replace(/<img[^>]*>/gi, "")
-    .replace(/<iframe[\s\S]*?<\/iframe>/gi, "")
-    .replace(/<form[\s\S]*?<\/form>/gi, "");
-}
-
-function normalizeRenderedRichText(value: string) {
-  return value
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&apos;/gi, "'")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/\s+/g, " ")
     .trim();
 }
 
