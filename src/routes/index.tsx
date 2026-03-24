@@ -126,7 +126,7 @@ function App() {
   const [draft, setDraft] = useState("");
   const [activeWorkoutId, setActiveWorkoutId] = useState(workouts[0].id);
   const [workoutCatalog, setWorkoutCatalog] = useState<WorkoutCatalogWorkout[]>([]);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingThreadIds, setPendingThreadIds] = useState<string[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -142,12 +142,19 @@ function App() {
   const [lastActivitySeenAt, setLastActivitySeenAt] = useState(0);
   const [customerSession, setCustomerSession] = useState<CustomerAuthSession | null>(null);
   const [hasHydratedConnectedState, setHasHydratedConnectedState] = useState(false);
-  const skipNextThreadSaveRef = useRef(false);
   const skipNextConnectedStateSaveRef = useRef(false);
   const savedThreadsRef = useRef<SavedChatThread[]>([]);
   const workoutActivityRef = useRef<WorkoutActivityEntry[]>([]);
   const lastActivitySeenAtRef = useRef(0);
   const currentThreadIdRef = useRef(currentThreadId);
+  const activeWorkoutIdRef = useRef(activeWorkoutId);
+  const threadMessagesRef = useRef<Record<string, DemoMessage[]>>({
+    [currentThreadId]: initialMessages,
+  });
+  const threadWorkoutIdsRef = useRef<Record<string, string>>({
+    [currentThreadId]: workouts[0].id,
+  });
+  const pendingThreadIdsRef = useRef(new Set<string>());
 
   async function ensureFreshCustomerSession(session: CustomerAuthSession | null) {
     const refreshedSession = await refreshCustomerSessionIfNeeded(session);
@@ -178,6 +185,14 @@ function App() {
 
   useEffect(() => {
     savedThreadsRef.current = savedThreads;
+    threadMessagesRef.current = {
+      ...threadMessagesRef.current,
+      ...Object.fromEntries(savedThreads.map((thread) => [thread.id, thread.messages])),
+    };
+    threadWorkoutIdsRef.current = {
+      ...threadWorkoutIdsRef.current,
+      ...Object.fromEntries(savedThreads.map((thread) => [thread.id, thread.activeWorkoutId])),
+    };
   }, [savedThreads]);
 
   useEffect(() => {
@@ -191,6 +206,21 @@ function App() {
   useEffect(() => {
     currentThreadIdRef.current = currentThreadId;
   }, [currentThreadId]);
+
+  useEffect(() => {
+    activeWorkoutIdRef.current = activeWorkoutId;
+  }, [activeWorkoutId]);
+
+  useEffect(() => {
+    threadMessagesRef.current = {
+      ...threadMessagesRef.current,
+      [currentThreadId]: messages,
+    };
+    threadWorkoutIdsRef.current = {
+      ...threadWorkoutIdsRef.current,
+      [currentThreadId]: activeWorkoutId,
+    };
+  }, [activeWorkoutId, currentThreadId, messages]);
 
   useEffect(() => {
     let cancelled = false;
@@ -299,7 +329,6 @@ function App() {
           setLastActivitySeenAt(mergedLastActivitySeenAt);
 
           if (selectedThread) {
-            skipNextThreadSaveRef.current = true;
             setCurrentThreadId(selectedThread.id);
             setMessages(selectedThread.messages);
             setActiveWorkoutId(selectedThread.activeWorkoutId);
@@ -351,12 +380,97 @@ function App() {
     };
   }, []);
 
-  async function submitPrompt(input: string) {
-    const trimmed = input.trim();
-    if (!trimmed || isSubmitting) {
+  function setThreadPending(threadId: string, isPending: boolean) {
+    setPendingThreadIds((current) => {
+      const next = new Set(current);
+
+      if (isPending) {
+        next.add(threadId);
+      } else {
+        next.delete(threadId);
+      }
+
+      pendingThreadIdsRef.current = next;
+      return Array.from(next);
+    });
+  }
+
+  function saveThreadSnapshot(
+    threadId: string,
+    nextMessages: DemoMessage[],
+    nextWorkoutId: string,
+  ) {
+    threadMessagesRef.current = {
+      ...threadMessagesRef.current,
+      [threadId]: nextMessages,
+    };
+    threadWorkoutIdsRef.current = {
+      ...threadWorkoutIdsRef.current,
+      [threadId]: nextWorkoutId,
+    };
+
+    if (currentThreadIdRef.current === threadId) {
+      startTransition(() => {
+        setMessages(nextMessages);
+        setActiveWorkoutId(nextWorkoutId);
+      });
+    }
+
+    if (!hasLoadedHistory) {
       return;
     }
 
+    const userMessages = nextMessages.filter((message) => message.role === "user");
+
+    if (!userMessages.length) {
+      return;
+    }
+
+    setSavedThreads((current) => {
+      const existingThread = current.find((thread) => thread.id === threadId);
+      const nextThread: SavedChatThread = {
+        id: threadId,
+        title: existingThread?.title ?? buildThreadTitle(userMessages[0]?.text ?? "New chat"),
+        messages: nextMessages,
+        activeWorkoutId: nextWorkoutId,
+        updatedAt: Date.now(),
+      };
+      const nextThreads = [nextThread, ...current.filter((thread) => thread.id !== threadId)]
+        .sort((left, right) => right.updatedAt - left.updatedAt)
+        .slice(0, 20);
+
+      writeSavedThreads(nextThreads);
+      return nextThreads;
+    });
+  }
+
+  function appendMessagesToThread(
+    threadId: string,
+    nextThreadMessages: DemoMessage[],
+    nextWorkoutId?: string,
+  ) {
+    const currentMessages =
+      threadMessagesRef.current[threadId] ??
+      (currentThreadIdRef.current === threadId ? messages : initialMessages);
+    const resolvedWorkoutId =
+      nextWorkoutId ??
+      threadWorkoutIdsRef.current[threadId] ??
+      (currentThreadIdRef.current === threadId ? activeWorkoutIdRef.current : workouts[0].id);
+
+    saveThreadSnapshot(threadId, [...currentMessages, ...nextThreadMessages], resolvedWorkoutId);
+  }
+
+  async function submitPrompt(input: string) {
+    const threadId = currentThreadIdRef.current;
+    const trimmed = input.trim();
+
+    if (!trimmed || pendingThreadIdsRef.current.has(threadId)) {
+      return;
+    }
+
+    const threadWorkoutId =
+      threadWorkoutIdsRef.current[threadId] ??
+      (currentThreadIdRef.current === threadId ? activeWorkoutIdRef.current : workouts[0].id);
     const authMode = getCustomerAuthRequestMode(trimmed);
 
     const userMessage: DemoMessage = {
@@ -366,34 +480,28 @@ function App() {
       text: trimmed,
     };
 
-    const reply = buildAssistantMessages(trimmed, activeWorkoutId);
+    const reply = buildAssistantMessages(trimmed, threadWorkoutId);
     const shouldAttachWorkoutCards = isWorkoutListRequest(trimmed);
     const workoutCardSlugs = shouldAttachWorkoutCards ? buildWorkoutCardIds(trimmed) : undefined;
+    const nextWorkoutId = reply.nextWorkoutId ?? threadWorkoutId;
 
     if (authMode) {
-      startTransition(() => {
-        setMessages((current) => [
-          ...current,
-          userMessage,
-          ...attachWorkoutCardsToMessages(reply.messages, workoutCardSlugs),
-        ]);
-        setDraft("");
-      });
+      appendMessagesToThread(
+        threadId,
+        [userMessage, ...attachWorkoutCardsToMessages(reply.messages, workoutCardSlugs)],
+        nextWorkoutId,
+      );
+      setDraft("");
       return;
     }
 
     if (shouldAttachWorkoutCards) {
-      startTransition(() => {
-        setMessages((current) => [
-          ...current,
-          userMessage,
-          ...attachWorkoutCardsToMessages(reply.messages, workoutCardSlugs),
-        ]);
-        if (reply.nextWorkoutId) {
-          setActiveWorkoutId(reply.nextWorkoutId);
-        }
-        setDraft("");
-      });
+      appendMessagesToThread(
+        threadId,
+        [userMessage, ...attachWorkoutCardsToMessages(reply.messages, workoutCardSlugs)],
+        nextWorkoutId,
+      );
+      setDraft("");
       return;
     }
 
@@ -406,10 +514,8 @@ function App() {
         initialMode: "login",
       };
 
-      startTransition(() => {
-        setMessages((current) => [...current, userMessage, orderAuthMessage]);
-        setDraft("");
-      });
+      appendMessagesToThread(threadId, [userMessage, orderAuthMessage], nextWorkoutId);
+      setDraft("");
       return;
     }
 
@@ -424,27 +530,19 @@ function App() {
         initialMode: "login",
       };
 
-      startTransition(() => {
-        setMessages((current) => [...current, userMessage, orderAuthMessage]);
-        setDraft("");
-      });
+      appendMessagesToThread(threadId, [userMessage, orderAuthMessage], nextWorkoutId);
+      setDraft("");
       return;
     }
 
-    startTransition(() => {
-      setMessages((current) => [...current, userMessage]);
-      if (reply.nextWorkoutId) {
-        setActiveWorkoutId(reply.nextWorkoutId);
-      }
-      setDraft("");
-    });
-
-    setIsSubmitting(true);
+    appendMessagesToThread(threadId, [userMessage], nextWorkoutId);
+    setDraft("");
+    setThreadPending(threadId, true);
 
     try {
       const response = await convexHttpClient.action(api.chat.reply, {
         message: trimmed,
-        workoutId: reply.nextWorkoutId ?? activeWorkoutId,
+        workoutId: nextWorkoutId,
         customerEmail: usableCustomerSession?.customer.email,
         customerAccessToken: usableCustomerSession?.accessToken,
       });
@@ -463,18 +561,15 @@ function App() {
         workoutSlugs: workoutCardSlugs,
       };
 
-      startTransition(() => {
-        setMessages((current) => [...current, assistantLiveMessage]);
-      });
+      appendMessagesToThread(threadId, [assistantLiveMessage], nextWorkoutId);
     } catch {
-      startTransition(() => {
-        setMessages((current) => [
-          ...current,
-          ...attachWorkoutCardsToMessages(reply.messages, workoutCardSlugs),
-        ]);
-      });
+      appendMessagesToThread(
+        threadId,
+        attachWorkoutCardsToMessages(reply.messages, workoutCardSlugs),
+        nextWorkoutId,
+      );
     } finally {
-      setIsSubmitting(false);
+      setThreadPending(threadId, false);
     }
   }
 
@@ -511,40 +606,6 @@ function App() {
 
     return () => window.clearTimeout(timeoutId);
   }, [isCartBumping]);
-
-  useEffect(() => {
-    if (!hasLoadedHistory) {
-      return;
-    }
-
-    if (skipNextThreadSaveRef.current) {
-      skipNextThreadSaveRef.current = false;
-      return;
-    }
-
-    const userMessages = messages.filter((message) => message.role === "user");
-
-    if (!userMessages.length) {
-      return;
-    }
-
-    setSavedThreads((current) => {
-      const existingThread = current.find((thread) => thread.id === currentThreadId);
-      const nextThread: SavedChatThread = {
-        id: currentThreadId,
-        title: existingThread?.title ?? buildThreadTitle(userMessages[0]?.text ?? "New chat"),
-        messages,
-        activeWorkoutId,
-        updatedAt: Date.now(),
-      };
-      const nextThreads = [nextThread, ...current.filter((thread) => thread.id !== currentThreadId)]
-        .sort((left, right) => right.updatedAt - left.updatedAt)
-        .slice(0, 20);
-
-      writeSavedThreads(nextThreads);
-      return nextThreads;
-    });
-  }, [activeWorkoutId, currentThreadId, hasLoadedHistory, messages]);
 
   useEffect(() => {
     if (!hasLoadedHistory) {
@@ -685,10 +746,22 @@ function App() {
   }, [isSearchOpen]);
 
   function createNewChat() {
-    setCurrentThreadId(createThreadId());
+    const nextThreadId = createThreadId();
+    const nextWorkoutId = workoutCatalog[0]?.slug ?? workouts[0].id;
+
+    threadMessagesRef.current = {
+      ...threadMessagesRef.current,
+      [nextThreadId]: initialMessages,
+    };
+    threadWorkoutIdsRef.current = {
+      ...threadWorkoutIdsRef.current,
+      [nextThreadId]: nextWorkoutId,
+    };
+
+    setCurrentThreadId(nextThreadId);
     setMessages(initialMessages);
     setDraft("");
-    setActiveWorkoutId(workoutCatalog[0]?.slug ?? workouts[0].id);
+    setActiveWorkoutId(nextWorkoutId);
     setIsCartOpen(false);
     setIsActivityOpen(false);
     setIsSearchOpen(false);
@@ -697,7 +770,15 @@ function App() {
   }
 
   function openSavedThread(thread: SavedChatThread) {
-    skipNextThreadSaveRef.current = true;
+    threadMessagesRef.current = {
+      ...threadMessagesRef.current,
+      [thread.id]: thread.messages,
+    };
+    threadWorkoutIdsRef.current = {
+      ...threadWorkoutIdsRef.current,
+      [thread.id]: thread.activeWorkoutId,
+    };
+
     setCurrentThreadId(thread.id);
     setMessages(thread.messages);
     setActiveWorkoutId(thread.activeWorkoutId);
@@ -796,18 +877,15 @@ function App() {
   }
 
   function openProductDetail(product: RecommendedProduct) {
-    startTransition(() => {
-      setMessages((current) => [
-        ...current,
-        {
-          id: `assistant-product-${Date.now()}-${product.url}`,
-          role: "assistant",
-          kind: "text",
-          text: `Here are the details for ${product.title}. You can pick a bundle and flavour below.`,
-          products: [product],
-        },
-      ]);
-    });
+    appendMessagesToThread(currentThreadIdRef.current, [
+      {
+        id: `assistant-product-${Date.now()}-${product.url}`,
+        role: "assistant",
+        kind: "text",
+        text: `Here are the details for ${product.title}. You can pick a bundle and flavour below.`,
+        products: [product],
+      },
+    ]);
   }
 
   function openArticleDetail(
@@ -819,43 +897,35 @@ function App() {
       ...relatedArticles.filter((entry) => entry.url !== article.url),
     ];
 
-    startTransition(() => {
-      setMessages((current) => [
-        ...current,
-        {
-          id: `assistant-article-${Date.now()}-${article.url}`,
-          role: "assistant",
-          kind: "text",
-          text: `Here’s another VPA article that covers this topic.`,
-          articles: orderedArticles,
-        },
-      ]);
-    });
+    appendMessagesToThread(currentThreadIdRef.current, [
+      {
+        id: `assistant-article-${Date.now()}-${article.url}`,
+        role: "assistant",
+        kind: "text",
+        text: `Here’s another VPA article that covers this topic.`,
+        articles: orderedArticles,
+      },
+    ]);
   }
 
   function openPageDetail(page: RecommendedPage, relatedPages: RecommendedPage[] = []) {
     const orderedPages = [page, ...relatedPages.filter((entry) => entry.url !== page.url)];
 
-    startTransition(() => {
-      setMessages((current) => [
-        ...current,
-        {
-          id: `assistant-page-${Date.now()}-${page.url}`,
-          role: "assistant",
-          kind: "text",
-          text: `Here’s another VPA page that matches your question.`,
-          pages: orderedPages,
-        },
-      ]);
-    });
+    appendMessagesToThread(currentThreadIdRef.current, [
+      {
+        id: `assistant-page-${Date.now()}-${page.url}`,
+        role: "assistant",
+        kind: "text",
+        text: `Here’s another VPA page that matches your question.`,
+        pages: orderedPages,
+      },
+    ]);
   }
 
   function openWorkoutDetail(workout: WorkoutCatalogWorkout) {
-    setActiveWorkoutId(workout.slug);
-
-    startTransition(() => {
-      setMessages((current) => [
-        ...current,
+    appendMessagesToThread(
+      currentThreadIdRef.current,
+      [
         {
           id: `assistant-workout-${Date.now()}-${workout.slug}`,
           role: "assistant",
@@ -863,8 +933,9 @@ function App() {
           text: `Here’s ${workout.name}.`,
           workoutDetailSlug: workout.slug,
         },
-      ]);
-    });
+      ],
+      workout.slug,
+    );
   }
 
   const cartSubtotal = cartItems.reduce((sum, item) => sum + item.bundlePrice * item.selections, 0);
@@ -882,6 +953,7 @@ function App() {
     "Track my VPA order",
   ];
   const hasUserMessages = messages.some((message) => message.role === "user");
+  const isCurrentThreadSubmitting = pendingThreadIds.includes(currentThreadId);
   const sidebarAccountName = customerSession?.customer.displayName || "VPA AU";
   const sidebarAccountSubtitle = customerSession?.customer.email || null;
   const sidebarAccountInitials = getInitials(
@@ -1391,7 +1463,7 @@ function App() {
                         ) : null}
                       </article>
                     ))}
-                    {isSubmitting ? <AssistantTypingIndicator /> : null}
+                    {isCurrentThreadSubmitting ? <AssistantTypingIndicator /> : null}
                   </div>
                 </div>
               </div>
@@ -1472,11 +1544,15 @@ function App() {
                           onClick={() => {
                             void submitPrompt(draft);
                           }}
-                          disabled={isSubmitting}
-                          aria-label={isSubmitting ? "Sending message" : "Send message"}
+                          disabled={isCurrentThreadSubmitting}
+                          aria-label={
+                            isCurrentThreadSubmitting ? "Sending message" : "Send message"
+                          }
                           className="flex h-11 w-11 items-center justify-center rounded-full bg-[#3B7539] text-white disabled:opacity-70"
                         >
-                          <span className="sr-only">{isSubmitting ? "Sending..." : "Send"}</span>
+                          <span className="sr-only">
+                            {isCurrentThreadSubmitting ? "Sending..." : "Send"}
+                          </span>
                           <svg
                             aria-hidden="true"
                             viewBox="0 0 24 24"
