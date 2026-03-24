@@ -12,6 +12,8 @@ import {
   isPageRecommendationRequest,
   isOrderTrackingRequest,
   isStaleEventPage,
+  mapAdminOrderToPreview,
+  mergeAdminOrders,
   scorePageIntentMatch,
 } from "./chat";
 
@@ -152,6 +154,10 @@ describe("chat intent helpers", () => {
     ).toBe(true);
   });
 
+  test("detects previous-order history requests without requiring an email", () => {
+    expect(isOrderHistoryRequest("can you show me my previous orders")).toBe(true);
+  });
+
   test("extracts an order number from order tracking prompts", () => {
     expect(
       extractOrderNumber(
@@ -166,5 +172,53 @@ describe("chat intent helpers", () => {
         "could you track this order number #599005 the email is this it@vpaaustralia.com",
       ),
     ).toBe("it@vpaaustralia.com");
+  });
+
+  test("merges Shopify customer and email-search orders without dropping refunded entries", () => {
+    const refundedOrder = {
+      name: "#1002",
+      email: "customer@example.com",
+      processedAt: "2026-03-20T12:00:00Z",
+      displayFulfillmentStatus: null,
+      displayFinancialStatus: "REFUNDED",
+      statusPageUrl: null,
+      customer: { email: "customer@example.com" },
+      fulfillments: [],
+    };
+    const activeOrder = {
+      name: "#1001",
+      email: "customer@example.com",
+      processedAt: "2026-03-10T12:00:00Z",
+      displayFulfillmentStatus: "FULFILLED",
+      displayFinancialStatus: "PAID",
+      statusPageUrl: "https://example.com/orders/1001",
+      customer: { email: "customer@example.com" },
+      fulfillments: [],
+    };
+
+    expect(
+      mergeAdminOrders([activeOrder], [refundedOrder, activeOrder]).map((order) => order.name),
+    ).toEqual(["#1002", "#1001"]);
+  });
+
+  test("formats refunded order previews with refunded status text", () => {
+    const preview = mapAdminOrderToPreview(
+      {
+        name: "#1002",
+        email: "customer@example.com",
+        processedAt: "2026-03-20T12:00:00Z",
+        displayFulfillmentStatus: null,
+        displayFinancialStatus: "REFUNDED",
+        statusPageUrl: null,
+        customer: { email: "customer@example.com" },
+        fulfillments: [],
+      },
+      "customer@example.com",
+    );
+
+    expect(preview.status).toBe("Refunded");
+    expect(preview.eta).toBe("Order refunded");
+    expect(preview.lastEvent).toContain("refunded");
+    expect(preview.financialStatus).toBe("Refunded");
   });
 });

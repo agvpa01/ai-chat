@@ -140,6 +140,7 @@ type OrderTrackingPreview = {
 type AdminOrderCard = {
   name: string;
   email: string | null;
+  processedAt: string | null;
   displayFulfillmentStatus: string | null;
   displayFinancialStatus: string | null;
   statusPageUrl: string | null;
@@ -1178,6 +1179,8 @@ export function isOrderHistoryRequest(message: string) {
     (lowered.includes("orders") && lowered.includes("email")) ||
     lowered.includes("order history") ||
     lowered.includes("my orders") ||
+    lowered.includes("previous orders") ||
+    lowered.includes("past orders") ||
     lowered.includes("orders for") ||
     lowered.includes("orders of")
   );
@@ -2181,7 +2184,8 @@ Your allowed topics are:
 
 If a question is not about VPA, workouts, exercises, health/fitness guidance, or supplements, politely refuse and redirect back to what you can help with.
 Do not answer general off-topic questions, news, entertainment, politics, coding, or unrelated shopping questions.
-For order help, ask for the email used on the order if needed.
+For order help, use the connected Shopify customer account whenever it is available, and do not ask for their email again in that case.
+Only ask for the order email when there is no connected Shopify customer context available.
 Do not invent medical advice, diagnoses, treatments, or store policies.
 Do not claim certainty when live store data is unavailable.
 Do not invent products, bundles, starter packs, or prices that are not in the provided data.
@@ -2656,117 +2660,33 @@ async function getTrackedOrder(
   const normalizedEmail = email.trim().toLowerCase();
   const normalizedOrderNumber = orderNumber.startsWith("#") ? orderNumber : `#${orderNumber}`;
   const targetOrderNumber = normalizedOrderNumber.replace(/^#/, "").trim().toUpperCase();
-  const customerOrders = await getCustomerOrdersByEmail(normalizedEmail);
-  const customerMatch = findOrderByNumber(
-    customerOrders,
-    targetOrderNumber,
-    false,
-    normalizedEmail,
-  );
+  const [customerOrders, searchedOrders] = await Promise.all([
+    getCustomerOrdersByEmail(normalizedEmail),
+    getOrdersByEmailSearchResults(normalizedEmail),
+  ]);
+  const mergedOrders = mergeAdminOrders(customerOrders, searchedOrders);
+  const trackedOrder = findOrderByNumber(mergedOrders, targetOrderNumber, true, normalizedEmail);
 
-  if (customerMatch) {
-    return mapAdminOrderToPreview(customerMatch, normalizedEmail);
-  }
-
-  return await getTrackedOrderBySearch(targetOrderNumber, normalizedEmail);
-}
-
-async function getTrackedOrderBySearch(
-  targetOrderNumber: string,
-  normalizedEmail: string,
-): Promise<OrderTrackingPreview | null> {
-  const storeDomain = process.env.SHOPIFY_STORE_DOMAIN;
-  const adminToken = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
-
-  if (!storeDomain || !adminToken) {
+  if (!trackedOrder) {
     return null;
   }
 
-  const query = buildOrderEmailSearchQuery(normalizedEmail);
-  const response = await fetch(`https://${storeDomain}/admin/api/2025-10/graphql.json`, {
-    method: "POST",
-    signal: AbortSignal.timeout(10000),
-    headers: {
-      "Content-Type": "application/json",
-      "X-Shopify-Access-Token": adminToken,
-    },
-    body: JSON.stringify({
-      query: `
-        query TrackOrder($query: String!) {
-          orders(first: 25, query: $query, sortKey: PROCESSED_AT, reverse: true) {
-            nodes {
-              name
-              email
-              displayFulfillmentStatus
-              displayFinancialStatus
-              statusPageUrl
-              customer {
-                email
-              }
-              fulfillments {
-                status
-                createdAt
-                trackingInfo {
-                  company
-                  number
-                  url
-                }
-              }
-            }
-          }
-        }
-      `,
-      variables: {
-        query,
-      },
-    }),
-  });
-
-  if (!response.ok) {
-    return null;
-  }
-
-  const payload = (await response.json()) as {
-    data?: {
-      orders?: {
-        nodes: AdminOrderCard[];
-      };
-    };
-    errors?: Array<{ message: string }>;
-  };
-
-  if (payload.errors?.length) {
-    return null;
-  }
-
-  const order = findOrderByNumber(
-    payload.data?.orders?.nodes ?? [],
-    targetOrderNumber,
-    true,
-    normalizedEmail,
-  );
-
-  if (!order) {
-    return null;
-  }
-
-  return mapAdminOrderToPreview(order, normalizedEmail);
+  return mapAdminOrderToPreview(trackedOrder, normalizedEmail);
 }
 
 async function getOrdersByEmail(email: string): Promise<OrderTrackingPreview[]> {
   const normalizedEmail = email.trim().toLowerCase();
-  const customerOrders = await getCustomerOrdersByEmail(normalizedEmail);
+  const [customerOrders, searchedOrders] = await Promise.all([
+    getCustomerOrdersByEmail(normalizedEmail),
+    getOrdersByEmailSearchResults(normalizedEmail),
+  ]);
 
-  if (customerOrders.length) {
-    return customerOrders
-      .map((entry) => mapAdminOrderToPreview(entry, normalizedEmail))
-      .slice(0, 5);
-  }
-
-  return await getOrdersByEmailSearch(normalizedEmail);
+  return mergeAdminOrders(customerOrders, searchedOrders)
+    .map((entry) => mapAdminOrderToPreview(entry, normalizedEmail))
+    .slice(0, 5);
 }
 
-async function getOrdersByEmailSearch(normalizedEmail: string): Promise<OrderTrackingPreview[]> {
+async function getOrdersByEmailSearchResults(normalizedEmail: string): Promise<AdminOrderCard[]> {
   const storeDomain = process.env.SHOPIFY_STORE_DOMAIN;
   const adminToken = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
 
@@ -2788,6 +2708,7 @@ async function getOrdersByEmailSearch(normalizedEmail: string): Promise<OrderTra
             nodes {
               name
               email
+              processedAt
               displayFulfillmentStatus
               displayFinancialStatus
               statusPageUrl
@@ -2834,10 +2755,9 @@ async function getOrdersByEmailSearch(normalizedEmail: string): Promise<OrderTra
     return [];
   }
 
-  return (payload.data?.orders?.nodes ?? [])
-    .filter((entry) => hasMatchingEmail(entry, normalizedEmail))
-    .map((entry) => mapAdminOrderToPreview(entry, normalizedEmail))
-    .slice(0, 5);
+  return (payload.data?.orders?.nodes ?? []).filter((entry) =>
+    hasMatchingEmail(entry, normalizedEmail),
+  );
 }
 
 async function getCustomerOrdersByEmail(email: string): Promise<AdminOrderCard[]> {
@@ -2866,6 +2786,7 @@ async function getCustomerOrdersByEmail(email: string): Promise<AdminOrderCard[]
                 nodes {
                   name
                   email
+                  processedAt
                   displayFulfillmentStatus
                   displayFinancialStatus
                   statusPageUrl
@@ -2931,6 +2852,20 @@ async function getCustomerOrdersByEmail(email: string): Promise<AdminOrderCard[]
   return orders;
 }
 
+export function mergeAdminOrders(...orderGroups: AdminOrderCard[][]) {
+  return orderGroups
+    .flatMap((orders) => orders)
+    .sort((left, right) => {
+      const leftTimestamp = left.processedAt ? Date.parse(left.processedAt) : 0;
+      const rightTimestamp = right.processedAt ? Date.parse(right.processedAt) : 0;
+      return rightTimestamp - leftTimestamp;
+    })
+    .filter(
+      (entry, index, entries) =>
+        entries.findIndex((candidate) => candidate.name === entry.name) === index,
+    );
+}
+
 function findOrderByNumber(
   orders: AdminOrderCard[],
   targetOrderNumber: string,
@@ -2954,26 +2889,34 @@ function hasMatchingEmail(entry: AdminOrderCard, normalizedEmail: string) {
   return candidateEmails.includes(normalizedEmail);
 }
 
-function mapAdminOrderToPreview(
+export function mapAdminOrderToPreview(
   entry: AdminOrderCard,
   normalizedEmail: string,
 ): OrderTrackingPreview {
   const latestFulfillment = entry.fulfillments[0] ?? null;
   const latestTracking = latestFulfillment?.trackingInfo[0] ?? null;
-  const statusLabel = humanizeOrderStatus(
-    entry.displayFulfillmentStatus ?? latestFulfillment?.status,
-  );
+  const financialStatusLabel = humanizeOrderStatus(entry.displayFinancialStatus);
+  const statusLabel =
+    humanizeOrderStatus(entry.displayFulfillmentStatus ?? latestFulfillment?.status) ??
+    financialStatusLabel;
+  const isRefunded = (entry.displayFinancialStatus ?? "").toLowerCase().includes("refund");
 
   return {
     orderNumber: entry.name,
     status: statusLabel ?? "Processing",
-    eta: latestTracking?.url ? "Tracking available" : "Awaiting courier update",
+    eta: latestTracking?.url
+      ? "Tracking available"
+      : isRefunded
+        ? "Order refunded"
+        : "Awaiting courier update",
     lastEvent: latestTracking?.number
       ? `${latestTracking.company ?? "Courier"} tracking ${latestTracking.number} is now available.`
-      : latestFulfillment?.createdAt
-        ? `Fulfilment updated on ${new Date(latestFulfillment.createdAt).toLocaleString("en-AU")}.`
-        : "Your order is being prepared for its next delivery update.",
-    financialStatus: humanizeOrderStatus(entry.displayFinancialStatus),
+      : isRefunded
+        ? "This order has been refunded."
+        : latestFulfillment?.createdAt
+          ? `Fulfilment updated on ${new Date(latestFulfillment.createdAt).toLocaleString("en-AU")}.`
+          : "Your order is being prepared for its next delivery update.",
+    financialStatus: financialStatusLabel,
     trackingNumber: latestTracking?.number ?? null,
     trackingCompany: latestTracking?.company ?? null,
     trackingUrl: latestTracking?.url ?? entry.statusPageUrl ?? null,

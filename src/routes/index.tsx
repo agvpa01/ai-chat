@@ -2247,6 +2247,9 @@ function looksLikeOrderSupportRequest(input: string) {
     lowered.includes("order status") ||
     lowered.includes("where is my order") ||
     lowered.includes("order history") ||
+    lowered.includes("my orders") ||
+    lowered.includes("previous orders") ||
+    lowered.includes("past orders") ||
     (lowered.includes("orders") && lowered.includes("email")) ||
     (lowered.includes("order") && lowered.includes("#"))
   );
