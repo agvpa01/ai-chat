@@ -636,7 +636,7 @@ export function WorkoutDetailCard({
                             ) : null}
                           </div>
 
-                          <div className="space-y-4">
+                          <div className="space-y-3">
                             <div className="space-y-3">
                               <h3 className="m-0 text-[2rem] font-semibold tracking-[-0.04em] text-[#173A40]">
                                 {activeExercise.name}
@@ -651,61 +651,59 @@ export function WorkoutDetailCard({
                                 </span>
                               </div>
                             </div>
-
-                            <div className="grid justify-center gap-3 sm:grid-cols-[repeat(2,minmax(0,11rem))]">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  adjustTarget(activeExercise.mode === "timer" ? -5 : -1)
-                                }
-                                className="w-full rounded-full border border-[#173A40]/10 bg-[#F8FBF8] px-4 py-3 text-sm font-semibold text-[#173A40] sm:w-[11rem]"
-                              >
-                                {activeExercise.mode === "timer" ? "-5 sec" : "-1 rep"}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  adjustTarget(activeExercise.mode === "timer" ? 5 : 1)
-                                }
-                                className="w-full rounded-full border border-[#173A40]/10 bg-[#F8FBF8] px-4 py-3 text-sm font-semibold text-[#173A40] sm:w-[11rem]"
-                              >
-                                {activeExercise.mode === "timer" ? "+5 sec" : "+1 rep"}
-                              </button>
-                            </div>
-
-                            <div className="flex flex-col items-center gap-3 sm:flex-row sm:flex-wrap sm:justify-center">
-                              {activeExercise.mode === "reps" ? (
-                                <button
-                                  type="button"
-                                  onClick={beginRest}
-                                  className="w-full max-w-[19rem] rounded-full bg-[#173A40] px-5 py-3 text-sm font-semibold text-white sm:min-w-[12rem] sm:w-auto sm:max-w-none"
-                                >
-                                  Mark done
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => setIsRunning((current) => !current)}
-                                  className="inline-flex w-full max-w-[19rem] items-center justify-center gap-2 rounded-full bg-[#173A40] px-5 py-3 text-sm font-semibold text-white sm:min-w-[12rem] sm:w-auto sm:max-w-none"
-                                >
-                                  {isRunning ? (
-                                    <Pause className="h-4 w-4" />
-                                  ) : (
-                                    <Play className="h-4 w-4 fill-current" />
-                                  )}
-                                  {isRunning ? "Pause timer" : "Resume timer"}
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                onClick={beginRest}
-                                className="inline-flex w-full max-w-[19rem] items-center justify-center gap-2 rounded-full border border-[#173A40]/10 bg-white px-4 py-3 text-sm font-semibold text-[#173A40] sm:min-w-[12rem] sm:w-auto sm:max-w-none"
-                              >
-                                <SkipForward className="h-4 w-4" />
-                                Skip to rest
-                              </button>
-                            </div>
                           </div>
+                        </div>
+
+                        <div className="mx-auto mt-5 flex w-full max-w-[22.75rem] flex-col items-center gap-3">
+                          <div className="grid w-full gap-3 sm:grid-cols-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                adjustTarget(activeExercise.mode === "timer" ? -5 : -1)
+                              }
+                              className="w-full rounded-full border border-[#173A40]/10 bg-[#F8FBF8] px-4 py-3 text-sm font-semibold text-[#173A40]"
+                            >
+                              {activeExercise.mode === "timer" ? "-5 sec" : "-1 rep"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => adjustTarget(activeExercise.mode === "timer" ? 5 : 1)}
+                              className="w-full rounded-full border border-[#173A40]/10 bg-[#F8FBF8] px-4 py-3 text-sm font-semibold text-[#173A40]"
+                            >
+                              {activeExercise.mode === "timer" ? "+5 sec" : "+1 rep"}
+                            </button>
+                          </div>
+
+                          {activeExercise.mode === "reps" ? (
+                            <button
+                              type="button"
+                              onClick={beginRest}
+                              className="w-full rounded-full bg-[#173A40] px-5 py-3 text-sm font-semibold text-white"
+                            >
+                              Mark done
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setIsRunning((current) => !current)}
+                              className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#173A40] px-5 py-3 text-sm font-semibold text-white"
+                            >
+                              {isRunning ? (
+                                <Pause className="h-4 w-4" />
+                              ) : (
+                                <Play className="h-4 w-4 fill-current" />
+                              )}
+                              {isRunning ? "Pause timer" : "Resume timer"}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={beginRest}
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-[#173A40]/10 bg-white px-4 py-3 text-sm font-semibold text-[#173A40]"
+                          >
+                            <SkipForward className="h-4 w-4" />
+                            Skip to rest
+                          </button>
                         </div>
                       </div>
 
