@@ -652,13 +652,13 @@ export function WorkoutDetailCard({
                               </div>
                             </div>
 
-                            <div className="grid gap-3 sm:grid-cols-[repeat(2,minmax(0,11rem))]">
+                            <div className="grid justify-center gap-3 sm:grid-cols-[repeat(2,minmax(0,11rem))]">
                               <button
                                 type="button"
                                 onClick={() =>
                                   adjustTarget(activeExercise.mode === "timer" ? -5 : -1)
                                 }
-                                className="rounded-full border border-[#173A40]/10 bg-[#F8FBF8] px-4 py-3 text-sm font-semibold text-[#173A40]"
+                                className="w-full rounded-full border border-[#173A40]/10 bg-[#F8FBF8] px-4 py-3 text-sm font-semibold text-[#173A40] sm:w-[11rem]"
                               >
                                 {activeExercise.mode === "timer" ? "-5 sec" : "-1 rep"}
                               </button>
@@ -667,18 +667,18 @@ export function WorkoutDetailCard({
                                 onClick={() =>
                                   adjustTarget(activeExercise.mode === "timer" ? 5 : 1)
                                 }
-                                className="rounded-full border border-[#173A40]/10 bg-[#F8FBF8] px-4 py-3 text-sm font-semibold text-[#173A40]"
+                                className="w-full rounded-full border border-[#173A40]/10 bg-[#F8FBF8] px-4 py-3 text-sm font-semibold text-[#173A40] sm:w-[11rem]"
                               >
                                 {activeExercise.mode === "timer" ? "+5 sec" : "+1 rep"}
                               </button>
                             </div>
 
-                            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+                            <div className="flex flex-col items-center gap-3 sm:flex-row sm:flex-wrap sm:justify-center">
                               {activeExercise.mode === "reps" ? (
                                 <button
                                   type="button"
                                   onClick={beginRest}
-                                  className="min-w-[12rem] rounded-full bg-[#173A40] px-5 py-3 text-sm font-semibold text-white"
+                                  className="w-full max-w-[19rem] rounded-full bg-[#173A40] px-5 py-3 text-sm font-semibold text-white sm:min-w-[12rem] sm:w-auto sm:max-w-none"
                                 >
                                   Mark done
                                 </button>
@@ -686,7 +686,7 @@ export function WorkoutDetailCard({
                                 <button
                                   type="button"
                                   onClick={() => setIsRunning((current) => !current)}
-                                  className="inline-flex min-w-[12rem] items-center justify-center gap-2 rounded-full bg-[#173A40] px-5 py-3 text-sm font-semibold text-white"
+                                  className="inline-flex w-full max-w-[19rem] items-center justify-center gap-2 rounded-full bg-[#173A40] px-5 py-3 text-sm font-semibold text-white sm:min-w-[12rem] sm:w-auto sm:max-w-none"
                                 >
                                   {isRunning ? (
                                     <Pause className="h-4 w-4" />
@@ -699,7 +699,7 @@ export function WorkoutDetailCard({
                               <button
                                 type="button"
                                 onClick={beginRest}
-                                className="inline-flex min-w-[12rem] items-center justify-center gap-2 rounded-full border border-[#173A40]/10 bg-white px-4 py-3 text-sm font-semibold text-[#173A40]"
+                                className="inline-flex w-full max-w-[19rem] items-center justify-center gap-2 rounded-full border border-[#173A40]/10 bg-white px-4 py-3 text-sm font-semibold text-[#173A40] sm:min-w-[12rem] sm:w-auto sm:max-w-none"
                               >
                                 <SkipForward className="h-4 w-4" />
                                 Skip to rest
