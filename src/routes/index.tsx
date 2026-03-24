@@ -56,6 +56,7 @@ type FlavourImageEntry = {
 };
 
 let flavourImageCache: Record<string, string> | null = null;
+let flavourImageCachePromise: Promise<Record<string, string>> | null = null;
 let storefrontVariantCache: Record<
   string,
   Record<
@@ -101,6 +102,8 @@ const CHAT_HISTORY_STORAGE_KEY = "vpa-chat-history-v1";
 const CHAT_CART_STORAGE_KEY = "vpa-chat-cart-v1";
 const WORKOUT_ACTIVITY_STORAGE_KEY = "vpa-workout-activity-v1";
 const WORKOUT_ACTIVITY_SEEN_AT_STORAGE_KEY = "vpa-workout-activity-seen-at-v1";
+const FLAVOUR_IMAGE_CACHE_STORAGE_KEY = "vpa-flavour-image-cache-v1";
+const FLAVOUR_IMAGE_CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 24;
 
 const workoutEvents: WorkoutEventEntry[] = [
   {
@@ -269,6 +272,10 @@ function App() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => {
+    void loadFlavourImageCatalog();
   }, []);
 
   useEffect(() => {
@@ -2659,39 +2666,31 @@ function ProductCard({
     : true;
 
   useEffect(() => {
-    if (flavourImageCache) {
-      setFlavourImages(flavourImageCache);
-      return;
-    }
-
     let cancelled = false;
 
-    async function loadFlavourImages() {
-      try {
-        const response = await fetch("https://products.vpa.com.au/public/feed/flavours.json");
-        if (!response.ok) {
-          return;
-        }
-
-        const entries = (await response.json()) as FlavourImageEntry[];
-        const mapped = Object.fromEntries(
-          entries.map((entry) => [normalizeFlavourName(entry.name), entry.url]),
-        );
-
-        flavourImageCache = mapped;
-
-        if (!cancelled) {
-          setFlavourImages(mapped);
-        }
-      } catch {}
-    }
-
-    void loadFlavourImages();
+    void loadFlavourImageCatalog().then((mapped) => {
+      if (!cancelled) {
+        setFlavourImages(mapped);
+      }
+    });
 
     return () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!flavourValues.length || !Object.keys(flavourImages).length) {
+      return;
+    }
+
+    preloadImages(
+      flavourValues
+        .map((value) => findFlavourImage(value, flavourImages))
+        .filter((url): url is string => Boolean(url))
+        .slice(0, 12),
+    );
+  }, [flavourImages, flavourValues]);
 
   useEffect(() => {
     if (storefrontVariantCache[product.url]) {
@@ -3335,6 +3334,123 @@ function buildFallbackWorkoutCard(slug: string): WorkoutCatalogWorkout | null {
     })),
     recommendedProducts: [],
   };
+}
+
+function preloadImages(urls: string[]) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  for (const url of urls) {
+    const safeUrl = sanitizeAssetUrl(url);
+
+    if (!safeUrl) {
+      continue;
+    }
+
+    const image = new window.Image();
+    image.decoding = "async";
+    image.src = safeUrl;
+  }
+}
+
+function readStoredFlavourImageCache() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(FLAVOUR_IMAGE_CACHE_STORAGE_KEY);
+
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as {
+      updatedAt?: number;
+      images?: Record<string, string>;
+    };
+
+    if (
+      typeof parsed.updatedAt !== "number" ||
+      !parsed.images ||
+      typeof parsed.images !== "object" ||
+      Date.now() - parsed.updatedAt > FLAVOUR_IMAGE_CACHE_MAX_AGE_MS
+    ) {
+      return null;
+    }
+
+    return Object.fromEntries(
+      Object.entries(parsed.images)
+        .map(([name, url]) => [name, sanitizeAssetUrl(url)])
+        .filter((entry): entry is [string, string] => Boolean(entry[1])),
+    );
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredFlavourImageCache(images: Record<string, string>) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(
+      FLAVOUR_IMAGE_CACHE_STORAGE_KEY,
+      JSON.stringify({
+        updatedAt: Date.now(),
+        images,
+      }),
+    );
+  } catch {}
+}
+
+async function loadFlavourImageCatalog() {
+  if (flavourImageCache) {
+    return flavourImageCache;
+  }
+
+  const storedImages = readStoredFlavourImageCache();
+
+  if (storedImages && Object.keys(storedImages).length > 0) {
+    flavourImageCache = storedImages;
+    preloadImages(Object.values(storedImages).slice(0, 24));
+    return storedImages;
+  }
+
+  if (flavourImageCachePromise) {
+    return await flavourImageCachePromise;
+  }
+
+  flavourImageCachePromise = (async () => {
+    try {
+      const response = await fetch("https://products.vpa.com.au/public/feed/flavours.json");
+
+      if (!response.ok) {
+        return flavourImageCache ?? {};
+      }
+
+      const entries = (await response.json()) as FlavourImageEntry[];
+      const mapped = Object.fromEntries(
+        entries
+          .map((entry) => [normalizeFlavourName(entry.name), sanitizeAssetUrl(entry.url)])
+          .filter((entry): entry is [string, string] => Boolean(entry[1])),
+      );
+
+      flavourImageCache = mapped;
+      writeStoredFlavourImageCache(mapped);
+      preloadImages(Object.values(mapped).slice(0, 24));
+
+      return mapped;
+    } catch {
+      return flavourImageCache ?? {};
+    } finally {
+      flavourImageCachePromise = null;
+    }
+  })();
+
+  return await flavourImageCachePromise;
 }
 
 function readSavedThreads(): SavedChatThread[] {

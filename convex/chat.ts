@@ -1212,6 +1212,28 @@ async function getReviewCount(productHandle: string) {
   }
 }
 
+async function enrichRecommendedProduct(product: AdminProductCard) {
+  const normalized = normalizeProduct(product);
+
+  if (!normalized) {
+    return null;
+  }
+
+  const [bundlePricing, reviewCount] = await Promise.all([
+    getBundlePricing(
+      product.legacyResourceId,
+      product.priceRangeV2.minVariantPrice.amount,
+      product.priceRangeV2.minVariantPrice.currencyCode,
+    ).catch(() => []),
+    getReviewCount(product.handle).catch(() => null),
+  ]);
+
+  normalized.bundlePricing = bundlePricing;
+  normalized.reviewCount = reviewCount;
+
+  return normalized;
+}
+
 function buildRecommendationSearchTerms(message: string, workoutId?: string) {
   const lowered = message.toLowerCase();
   const terms = new Set<string>();
@@ -1782,18 +1804,13 @@ async function getRecommendedProducts(message: string, workoutId?: string) {
 
       if (bestCollection?.products.nodes.length) {
         const dedupedCollectionProducts = new Map<string, RecommendedProduct>();
+        const enrichedProducts = await Promise.all(
+          bestCollection.products.nodes.map((product) => enrichRecommendedProduct(product)),
+        );
 
-        for (const product of bestCollection.products.nodes) {
-          const normalized = normalizeProduct(product);
-
-          if (normalized && !dedupedCollectionProducts.has(normalized.url)) {
-            normalized.bundlePricing = await getBundlePricing(
-              product.legacyResourceId,
-              product.priceRangeV2.minVariantPrice.amount,
-              product.priceRangeV2.minVariantPrice.currencyCode,
-            ).catch(() => []);
-            normalized.reviewCount = await getReviewCount(product.handle).catch(() => null);
-            dedupedCollectionProducts.set(normalized.url, normalized);
+        for (const product of enrichedProducts) {
+          if (product && !dedupedCollectionProducts.has(product.url)) {
+            dedupedCollectionProducts.set(product.url, product);
           }
         }
 
@@ -1885,19 +1902,15 @@ async function getRecommendedProducts(message: string, workoutId?: string) {
 
   const deduped = new Map<string, RecommendedProduct>();
 
-  for (const result of Object.values(payload.data ?? {})) {
-    for (const product of result.nodes) {
-      const normalized = normalizeProduct(product);
+  const enrichedProducts = await Promise.all(
+    Object.values(payload.data ?? {})
+      .flatMap((result) => result.nodes)
+      .map((product) => enrichRecommendedProduct(product)),
+  );
 
-      if (normalized && !deduped.has(normalized.url)) {
-        normalized.bundlePricing = await getBundlePricing(
-          product.legacyResourceId,
-          product.priceRangeV2.minVariantPrice.amount,
-          product.priceRangeV2.minVariantPrice.currencyCode,
-        ).catch(() => []);
-        normalized.reviewCount = await getReviewCount(product.handle).catch(() => null);
-        deduped.set(normalized.url, normalized);
-      }
+  for (const product of enrichedProducts) {
+    if (product && !deduped.has(product.url)) {
+      deduped.set(product.url, product);
     }
   }
 
@@ -2296,7 +2309,7 @@ async function createOpenAiReply(
   recommendedPages: RecommendedPage[],
 ) {
   const apiKey = process.env.OPENAI_API_KEY;
-  const model = process.env.OPENAI_MODEL ?? "gpt-5.4";
+  const model = process.env.OPENAI_MODEL ?? "gpt-5-mini";
 
   if (!apiKey) {
     return null;
@@ -2643,29 +2656,42 @@ export const reply = action({
       };
     }
 
-    const storeSnapshot = await getAdminStoreSnapshot().catch(() => null);
     const shouldPrioritizeExerciseGuidance = isExerciseGuidanceQuestion(message);
     const shouldPrioritizeArticleRecommendations = isArticleRecommendationRequest(message);
     const shouldPrioritizePageRecommendations = isPageRecommendationRequest(message);
-    const productRecommendations =
+    const wantsPageContext =
+      !shouldPrioritizeExerciseGuidance &&
+      (shouldPrioritizePageRecommendations || shouldPreferPage(message));
+    const wantsArticleContext =
+      !shouldPrioritizeExerciseGuidance &&
+      !wantsPageContext &&
+      (shouldPrioritizeArticleRecommendations || shouldPreferArticle(message));
+    const shouldHideProductCards =
+      isInformationalHealthQuestion(message) ||
       shouldPrioritizeExerciseGuidance ||
       shouldPrioritizeArticleRecommendations ||
-      shouldPrioritizePageRecommendations
-        ? ({
-            products: [],
-            collectionTitle: null,
-          } satisfies ProductRecommendationResult)
-        : await getRecommendedProducts(message, args.workoutId).catch(
-            () =>
-              ({
-                products: [],
-                collectionTitle: null,
-              }) satisfies ProductRecommendationResult,
-          );
+      shouldPrioritizePageRecommendations;
+    const shouldFetchProducts =
+      !shouldHideProductCards && !wantsPageContext && !wantsArticleContext;
+    const emptyProductRecommendations = {
+      products: [],
+      collectionTitle: null,
+    } satisfies ProductRecommendationResult;
+    const [storeSnapshot, productRecommendations, recommendedArticles, recommendedPages] =
+      await Promise.all([
+        getAdminStoreSnapshot().catch(() => null),
+        shouldFetchProducts
+          ? getRecommendedProducts(message, args.workoutId).catch(() => emptyProductRecommendations)
+          : Promise.resolve(emptyProductRecommendations),
+        wantsArticleContext
+          ? getRecommendedArticles(message).catch(() => [])
+          : Promise.resolve([] as RecommendedArticle[]),
+        wantsPageContext
+          ? getRecommendedPages(message).catch(() => [])
+          : Promise.resolve([] as RecommendedPage[]),
+      ]);
     const recommendedProducts = productRecommendations.products;
     const recommendedProductsCollectionTitle = productRecommendations.collectionTitle;
-    const recommendedArticles = await getRecommendedArticles(message).catch(() => []);
-    const recommendedPages = await getRecommendedPages(message).catch(() => []);
     let text =
       (await createOpenAiReply(
         message,
@@ -2676,20 +2702,9 @@ export const reply = action({
       ).catch(() => null)) ??
       "I’m here to help with VPA products, workouts, and order support. Ask me about recovery, muscle gain, or what product might fit your goal.";
 
-    const shouldHideProductCards =
-      isInformationalHealthQuestion(message) ||
-      shouldPrioritizeExerciseGuidance ||
-      shouldPrioritizeArticleRecommendations ||
-      shouldPrioritizePageRecommendations;
-    const shouldShowPage =
-      !shouldPrioritizeExerciseGuidance &&
-      (shouldPrioritizePageRecommendations || shouldPreferPage(message)) &&
-      recommendedPages.length > 0;
+    const shouldShowPage = wantsPageContext && recommendedPages.length > 0;
     const shouldShowArticle =
-      !shouldShowPage &&
-      !shouldPrioritizeExerciseGuidance &&
-      (shouldPrioritizeArticleRecommendations || shouldPreferArticle(message)) &&
-      recommendedArticles.length > 0;
+      !shouldShowPage && wantsArticleContext && recommendedArticles.length > 0;
     const shouldShowProductGallery =
       !shouldShowArticle &&
       !shouldHideProductCards &&
