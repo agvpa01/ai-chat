@@ -1172,8 +1172,14 @@ export function isOrderTrackingRequest(message: string) {
   );
 }
 
+function hasWholeWord(lowered: string, term: string) {
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`).test(lowered);
+}
+
 export function isOrderHistoryRequest(message: string) {
   const lowered = message.toLowerCase();
+  const mentionsOrders = hasWholeWord(lowered, "order") || hasWholeWord(lowered, "orders");
 
   return (
     (lowered.includes("orders") && lowered.includes("email")) ||
@@ -1181,6 +1187,14 @@ export function isOrderHistoryRequest(message: string) {
     lowered.includes("my orders") ||
     lowered.includes("previous orders") ||
     lowered.includes("past orders") ||
+    lowered.includes("list of orders") ||
+    lowered.includes("orders i've") ||
+    lowered.includes("orders i’ve") ||
+    lowered.includes("orders i have") ||
+    lowered.includes("orders i created") ||
+    lowered.includes("orders i placed") ||
+    lowered.includes("orders i made") ||
+    (mentionsOrders && lowered.includes("refunded")) ||
     lowered.includes("orders for") ||
     lowered.includes("orders of")
   );
@@ -1203,7 +1217,7 @@ export function isArticleRecommendationRequest(message: string) {
   const lowered = message.toLowerCase();
 
   return ["blog", "blogs", "article", "articles", "post", "posts", "read", "reading"].some((term) =>
-    lowered.includes(term),
+    hasWholeWord(lowered, term),
   );
 }
 

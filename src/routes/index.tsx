@@ -2250,6 +2250,14 @@ function looksLikeOrderSupportRequest(input: string) {
     lowered.includes("my orders") ||
     lowered.includes("previous orders") ||
     lowered.includes("past orders") ||
+    lowered.includes("list of orders") ||
+    lowered.includes("orders i've") ||
+    lowered.includes("orders i’ve") ||
+    lowered.includes("orders i have") ||
+    lowered.includes("orders i created") ||
+    lowered.includes("orders i placed") ||
+    lowered.includes("orders i made") ||
+    ((lowered.includes("order") || lowered.includes("orders")) && lowered.includes("refunded")) ||
     (lowered.includes("orders") && lowered.includes("email")) ||
     (lowered.includes("order") && lowered.includes("#"))
   );

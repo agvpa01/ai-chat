@@ -22,6 +22,14 @@ describe("chat intent helpers", () => {
     expect(isArticleRecommendationRequest("give me recommended blogs")).toBe(true);
   });
 
+  test("does not mistake already for a read intent", () => {
+    expect(
+      isArticleRecommendationRequest(
+        "please give me the list of orders i've created on vpa even those that were already refunded",
+      ),
+    ).toBe(false);
+  });
+
   test("does not fall back to best sellers for blog recommendation requests", () => {
     expect(buildCollectionSearchTerms("give me recommended blogs")).toEqual([]);
   });
@@ -156,6 +164,14 @@ describe("chat intent helpers", () => {
 
   test("detects previous-order history requests without requiring an email", () => {
     expect(isOrderHistoryRequest("can you show me my previous orders")).toBe(true);
+  });
+
+  test("detects refunded order-list requests for connected customers", () => {
+    expect(
+      isOrderHistoryRequest(
+        "please give me the list of orders i've created on vpa even those that were already refunded",
+      ),
+    ).toBe(true);
   });
 
   test("extracts an order number from order tracking prompts", () => {
